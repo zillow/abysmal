@@ -4,6 +4,9 @@ Abysmal
 
 .. include-documentation-begin-marker
 
+.. image:: https://travis-ci.org/zillow/abysmal.svg?branch=master
+        :target: https://travis-ci.org/zillow/abysmal
+
 Abysmal stands for "appallingly simple yet somehow mostly adequate language".
 
 Abysmal is a programming language designed to allow non-programmers

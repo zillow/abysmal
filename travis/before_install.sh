@@ -5,6 +5,4 @@ if [ -z "$TRAVIS" ]; then
     exit 1
 fi
 
-sudo apt-get -qq update
-sudo apt-get install python3-dev libmpdec-dev
 pip install pylint coverage

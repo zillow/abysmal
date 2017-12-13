@@ -4,20 +4,7 @@ python:
  - "3.5"
  - "3.6"
 
-before_install:
- - sudo apt-get -qq update
- - sudo apt-get install python3-dev libmpdec-dev
- - pip install pylint coverage
-
-install:
- - python3 setup.py sdist
- - pip install dist/abysmal.*.tar.gz
-
-script:
- - python3 -m pylint src/abysmal/*.py tests/*.py
- - python3 -m unittest -v tests/test_*.py
- - python3 -E -m coverage run --branch --source 'abysmal' -m unittest tests/test_*.py
- - python3 -E -m coverage xml -d $(abspath build/coverage)
-
-after_success:
- - bash <(curl -s https://codecov.io/bash)
+before_install: travis/before_install.sh
+install: travis/install.sh
+script: travis/script.sh
+after_success: travis/after_success.sh

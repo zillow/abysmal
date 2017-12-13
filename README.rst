@@ -44,7 +44,7 @@ is by dividing by zero, because:
 
 * it's not Turing-complete
 * it can't allocate memory
-* it can't access the hosting process or environment
+* it can't access the host process or environment
 * it operates on one and only one type: arbitrary-precision decimal numbers
 * its only control flow construct is GOTO
 * it doesn't even allow loops!
@@ -149,10 +149,14 @@ Numbers
 Abysmal supports itegers and fixed-point decimal numbers like `123`,
 `3.14159`, etc. In addition, numbers can have the following suffixes:
 
-* `%`                     percent (`12.5%` is equivalent to `0.125`)
-* `k` or `K`              thousand (`50k` is equivalent to `50000`)
-* `m` or `M`              million (`1.2m` is equivalent to `1200000`)
-* `b` or `B`              billion (`0.5b` is equivalent to `500000000`)
+==========  ======================================================
+suffix      meaning
+==========  ======================================================
+`%`         percent (`12.5%` is equivalent to `0.125`)
+`k` or `K`  thousand (`50k` is equivalent to `50000`)
+`m` or `M`  million (`1.2m` is equivalent to `1200000`)
+`b` or `B`  billion (`0.5b` is equivalent to `500000000`)
+==========  ======================================================
 
 Scientific notation is not supported.
 
@@ -170,30 +174,38 @@ Expressions
 Programs can evaluate expressions containing the following operators
 (in descending order of precedence):
 
-* `( exp )`               grouping; e.g. `(x + 1) * y`
-* `!`, `+`, `-`           logical NOT, unary plus, unary minus
-* `^`                     exponentiation
-* `*`, `/`                multiplication, division
-* `+`, `-`                addition, subtraction
-* `in { members }`
-* `not in { members }`    set membership; e.g. `x not in {1, 4, 9, 16}`
-* `<`, `<=`, `>`, `>=`    comparison
-* `==`, `!=`              equality, inequality
-* `&&`                    logical AND
-* `||`                    logical OR
-* `exp ? exp : exp`       if-then-else; e.g. `x < 0 ? -x : x`
+======================  ======================================================================
+operator                meaning
+======================  ======================================================================
+`( exp )`               grouping; e.g. `(x + 1) * y`
+`!`, `+`, `-`           logical NOT, unary plus, unary minus
+`^`                     exponentiation (right associative)
+`*`, `/`                multiplication, division
+`+`, `-`                addition, subtraction
+`in { members }`
+`not in { members }`    set membership; e.g. `x not in {1, 4, 9, 16}`
+`<`, `<=`, `>`, `>=`    comparison
+`==`, `!=`              equality, inequality
+`&&`                    logical AND
+`||`                    logical OR
+`exp ? exp : exp`       if-then-else; e.g. `x < 0 ? -x : x`
+======================  ======================================================================
 
 Functions
 ~~~~~~~~~
 
 Expressions can take advantage of the following built-in functions:
 
-* `ABS(exp)`              the absolute value of the specified value
-* `CEILING(exp)`          the nearest integer value greater than or equal to the specified value
-* `FLOOR(exp)`            the nearest integer value less than or equal to the specified value
-* `MAX(exp1, exp2, ...)`  the maximum of the specified values
-* `MIN(exp1, exp2, ...)`  the minimum of the specified values
-* `ROUND(exp)`            the specified value, rounded to the nearest integer
+======================  ======================================================================
+function                returns
+======================  ======================================================================
+`ABS(exp)`              the absolute value of the specified value
+`CEILING(exp)`          the nearest integer value greater than or equal to the specified value
+`FLOOR(exp)`            the nearest integer value less than or equal to the specified value
+`MAX(exp1, exp2, ...)`  the maximum of the specified values
+`MIN(exp1, exp2, ...)`  the minimum of the specified values
+`ROUND(exp)`            the specified value, rounded to the nearest integer
+======================  ======================================================================
 
 Variables
 ~~~~~~~~~
@@ -331,9 +343,9 @@ Decimal, float, or whatever numeric type you are interested in.
 Errors
 ------
 
-:`abysmal.CompilationError`
+`abysmal.CompilationError`
     raised by `abysmal.compile()`
-:`abysmal.ExecutionError`
+`abysmal.ExecutionError`
     raised by `machine.run()` and `machine.run_with_coverage()`
     if a program encounters an error while running; this includes conditions
     such as: division by zero, invalid exponentiation, stack overflow,

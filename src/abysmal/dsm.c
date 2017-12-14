@@ -136,8 +136,12 @@
 
 #include "mpdecimal.h"
 
-#if !defined(MPD_VERSION_HEX) || MPD_VERSION_HEX < 0x02040000
-  #error "libmpdec version >= 2.4.0 required"
+#if !defined(MPD_MAJOR_VERSION)
+  #error "libmpdec version unavailable"
+#endif
+
+#if MPD_MAJOR_VERSION < 2
+  #error "libmpdec version >= 2.0 required"
 #endif
 
 

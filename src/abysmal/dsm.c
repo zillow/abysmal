@@ -136,8 +136,8 @@
 
 #include "mpdecimal.h"
 
-#if !defined(MPD_VERSION_HEX) || MPD_VERSION_HEX < 0x02040100
-  #error "libmpdec version >= 2.4.1 required"
+#if !defined(MPD_VERSION_HEX) || MPD_VERSION_HEX < 0x02040000
+  #error "libmpdec version >= 2.4.0 required"
 #endif
 
 

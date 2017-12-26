@@ -1,8 +1,11 @@
-__version__ = '0.1.0'
+__version__ = '0.2.0'
 
 from decimal import Decimal
 import random
 
+from . import dsm as _dsm
+
+# expose as top-level exports
 from .compiler import compile, CompilationError # pylint: disable=redefined-builtin
 from .coverage import get_uncovered_lines, CoverageReport
 from .dsm import ExecutionError # pylint: disable=no-name-in-module
@@ -14,4 +17,4 @@ def _random_numbers():
         yield Decimal(random.randrange(random_range)) / random_range
 
 
-DEFAULT_RANDOM_NUMBER_ITERATOR = iter(_random_numbers())
+_dsm.random_number_iterator = iter(_random_numbers())

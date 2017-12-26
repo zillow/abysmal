@@ -300,18 +300,6 @@ Next, need to make a virtual machine for the compiled program to run on:
 
     machine = compiled_program.machine()
 
-If the program uses the special `random!` variable, we need to provide an
-iterator that the virtual machine can use to generate random numbers:
-
-.. code-block:: python
-
-    machine.random_number_iterator = abysmal.DEFAULT_RANDOM_NUMBER_ITERATOR
-
-The default random number iterator generates numbers between 0 and 1 with
-9 decimals places of precision, and uses the default Python PRNG (Mersenne
-Twister). If you require a more secure PRNG, you can supply your own. The
-iterator should yield an unbounded number of values.
-
 Next, we can set any variables as we see fit:
 
 .. code-block:: python
@@ -344,6 +332,25 @@ Variables can be set from int, float, bool, Decimal, and string values
 but are converted to strings when assigned. When examining variables
 after running a machine, you need to convert to the values back to
 Decimal, float, or whatever numeric type you are interested in.
+
+
+Random Numbers
+--------------
+
+By default, `random!` generates numbers between 0 and 1 with 9 decimal
+places of precision, and uses the default Python PRNG (`random.randrange`).
+
+If you require a more secure PRNG, or different precision, or if you want
+to force certain values to be produced for testing purposes, you can supply
+your own random number iterator before running a machine:
+
+.. code-block:: python
+
+    # force random! to yield 0, 1, 0, 1, ...
+    machine.random_number_iterator = itertools.cycle([0, 1])
+
+The values you return are not required to fall within any particular
+range, but [0, 1] is recommended, for consistency with the default behavior.
 
 
 Errors

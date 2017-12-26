@@ -974,7 +974,6 @@ let temp = 0
                 }
             )
             machine = program.machine(zero=0, one=1.0, tenth=Decimal('0.1'))
-            machine.random_number_iterator = abysmal.DEFAULT_RANDOM_NUMBER_ITERATOR
             try:
                 machine.run()
                 result = Decimal(machine['result'])

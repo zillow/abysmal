@@ -113,25 +113,20 @@
 #define STRINGIFY(x) STRINGIFY_(x)
 
 #define MODULE_INIT_ERROR NULL
-#define MODULE_START(methods, doc) \
-    PyMODINIT_FUNC CONCAT(PyInit_, MODULE_NAME)(void) { \
-        static struct PyModuleDef moduledef = { PyModuleDef_HEAD_INIT, STRINGIFY(MODULE_NAME), doc, -1, methods, }; \
-        PyObject* module = PyModule_Create(&moduledef); \
-        if (!module) return MODULE_INIT_ERROR;
-#define MODULE_END \
-        return module; \
-    }
+
 #define DEFINE_EXCEPTION(name, base) \
     do { \
         if (!(PyExc_##name = PyErr_NewException(STRINGIFY(MODULE_NAME) "." #name, PyExc_##base, NULL))) return MODULE_INIT_ERROR; \
         Py_INCREF(PyExc_##name); \
-        PyModule_AddObject(module, #name, PyExc_##name); \
+        PyModule_AddObject(PyModule_dsm, #name, PyExc_##name); \
     } while (0)
+
 #define DECLARE_PYTYPEOBJECT_EX(ct, pyt) \
     static PyTypeObject ct##Type = { \
         PyVarObject_HEAD_INIT(NULL, 0) \
         "abysmal." STRINGIFY(MODULE_NAME) "." #pyt, \
     }
+
 #define DECLARE_PYTYPEOBJECT(t) DECLARE_PYTYPEOBJECT_EX(t, t)
 
 #include "mpdecimal.h"
@@ -158,6 +153,7 @@
 
 /********** Global variables **********/
 
+static PyObject* PyModule_dsm = NULL;
 static PyObject* PyExc_ExecutionError = NULL;
 static PyObject* PyUnicode_semicolon = NULL;
 static PyObject* PyUnicode_pipe = NULL;
@@ -1033,6 +1029,7 @@ static PyObject* DSMMachine_run_(DSMMachine* machine, int coverage) {
     size_t instructionCount = machine->program->instructionCount;
 
     PyObject* result = NULL;
+    PyObject* randomNumberIterator = NULL; // lazily initialized
 
     mpd_context_t ctx; mpd_defaultcontext(&ctx);
     uint32_t mpdStatus = 0;
@@ -1130,13 +1127,25 @@ execute:
         }
 
         case OP_LOAD_RANDOM: {
+            if (!randomNumberIterator) {
+                randomNumberIterator = machine->randomNumberIterator;
+                if (!randomNumberIterator) {
+                    randomNumberIterator = PyObject_GetAttrString(PyModule_dsm, "random_number_iterator");
+                    if (!randomNumberIterator) {
+                        PyErr_Clear(); // ignore missing attribute
+                    }
+                }
+                if (randomNumberIterator) {
+                    Py_INCREF(randomNumberIterator); // decref during cleanup
+                    CHECK_WITH_MESSAGE(PyIter_Check(randomNumberIterator), "random_number_iterator is not an iterator");
+                }
+            }
             DSMValue* v;
-            if (!machine->randomNumberIterator) {
+            if (!randomNumberIterator) {
                 v = POS_INTERNED_DIGIT(0);
             } else {
                 v = NULL;
-                CHECK_WITH_MESSAGE(PyIter_Check(machine->randomNumberIterator), "random_number_iterator is not an iterator");
-                PyObject* random = PyIter_Next(machine->randomNumberIterator);
+                PyObject* random = PyIter_Next(randomNumberIterator);
                 CHECK_WITH_MESSAGE(random, "random_number_iterator ran out of values");
                 v = DSMMachine_createValueFromPythonObject(machine, random, "random number", &ctx);
                 Py_DECREF(random);
@@ -1293,6 +1302,8 @@ cleanup:
         PyErr_Restore(exceptionType, exceptionValue, traceback);
     }
 
+    Py_XDECREF(randomNumberIterator);
+
     if (coverageStats) {
         PyMem_Free(coverageStats);
     }
@@ -1339,7 +1350,10 @@ static PyMethodDef dsm_methods[] = {
     { NULL, NULL, 0, NULL }
 };
 
-MODULE_START(dsm_methods, "Decimal stack-machine.")
+PyMODINIT_FUNC CONCAT(PyInit_, MODULE_NAME)(void) {
+    static struct PyModuleDef moduledef = { PyModuleDef_HEAD_INIT, STRINGIFY(MODULE_NAME), "Decimal stack machine", -1, dsm_methods, };
+    PyModule_dsm = PyModule_Create(&moduledef);
+    if (!PyModule_dsm) return MODULE_INIT_ERROR;
 
     // Allocate global string constants.
     if (!(PyUnicode_semicolon = PyUnicode_InternFromString(";")) ||
@@ -1357,6 +1371,7 @@ MODULE_START(dsm_methods, "Decimal stack-machine.")
 
     // Add top-level module attributes.
     Py_INCREF(&DSMProgramType); // PyModule_AddObject() steals a ref
-    PyModule_AddObject(module, "Program", (PyObject*)&DSMProgramType);
+    PyModule_AddObject(PyModule_dsm, "Program", (PyObject*)&DSMProgramType);
 
-MODULE_END
+    return PyModule_dsm;
+}

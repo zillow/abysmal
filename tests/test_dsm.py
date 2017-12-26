@@ -1,7 +1,9 @@
 from decimal import Decimal
+import itertools
 import pickle
 import unittest
 
+from abysmal import dsm
 from abysmal.dsm import Program, ExecutionError # pylint: disable=no-name-in-module
 
 
@@ -263,13 +265,28 @@ class Test_dsm_Program(unittest.TestCase):
     def test_Lr(self):
         machine = Program('a|b|c|d;;LrSt0LrSt1LrSt2LrSt3Xx').machine()
 
-        def generator():
-            while True:
-                yield '0.5'
-                yield '3.14'
+        default_random_number_iterator = dsm.random_number_iterator
+        try:
+            # No PRNG at all
+            del dsm.random_number_iterator
+            self.assertEqual(machine.run(), 9)
+            self.assertEqual(machine['a'], '0')
+            self.assertEqual(machine['b'], '0')
+            self.assertEqual(machine['c'], '0')
+            self.assertEqual(machine['d'], '0')
 
-        machine.random_number_iterator = iter(generator())
+            # Default PRNG
+            dsm.random_number_iterator = itertools.cycle(['0', '1', '2'])
+            self.assertEqual(machine.run(), 9)
+            self.assertEqual(machine['a'], '0')
+            self.assertEqual(machine['b'], '1')
+            self.assertEqual(machine['c'], '2')
+            self.assertEqual(machine['d'], '0')
+        finally:
+            dsm.random_number_iterator = default_random_number_iterator
 
+        # Machine-specific PRNG
+        machine.random_number_iterator = itertools.cycle(['0.5', '3.14'])
         self.assertEqual(machine.run(), 9)
         self.assertEqual(machine['a'], '0.5')
         self.assertEqual(machine['b'], '3.14')

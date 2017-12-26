@@ -1,4 +1,4 @@
-#!/bin/sh -e
+#!/bin/bash
 
 if [ -z "$TRAVIS" ]; then
     echo "$0 should only be run in the Travis-ci environment."

@@ -7,6 +7,9 @@ Abysmal
 .. image:: https://travis-ci.org/zillow/abysmal.svg?branch=master
         :target: https://travis-ci.org/zillow/abysmal
 
+.. image:: https://codecov.io/gh/zillow/abysmal/branch/master/graph/badge.svg
+        :target: https://codecov.io/gh/zillow/abysmal
+
 Abysmal stands for "appallingly simple yet somehow mostly adequate language".
 
 Abysmal is a programming language designed to allow non-programmers

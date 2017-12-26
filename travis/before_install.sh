@@ -7,4 +7,4 @@ fi
 
 sudo apt-get -qq update
 sudo apt-get install -y python3-dev libmpdec-dev
-pip install pylint coverage
+pip install coverage

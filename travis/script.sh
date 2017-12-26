@@ -5,7 +5,6 @@ if [ -z "$TRAVIS" ]; then
     exit 1
 fi
 
-python3 -m pylint src/abysmal/*.py tests/*.py
 python3 -m unittest -v tests/test_*.py
 python3 -E -m coverage run --branch --source 'abysmal' -m unittest tests/test_*.py
 python3 -E -m coverage xml -d build/coverage

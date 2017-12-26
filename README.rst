@@ -149,7 +149,7 @@ into multiple, shorter lines. Note that comments can appear after a `\\`.
 Numbers
 ~~~~~~~
 
-Abysmal supports itegers and fixed-point decimal numbers like `123`,
+Abysmal supports integers and fixed-point decimal numbers like `123`,
 `3.14159`, etc. In addition, numbers can have the following suffixes:
 
 ==========  ======================================================

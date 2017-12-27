@@ -154,7 +154,9 @@
 /********** Global variables **********/
 
 static PyObject* PyModule_dsm = NULL;
+static PyObject* PyExc_InvalidProgramError = NULL;
 static PyObject* PyExc_ExecutionError = NULL;
+static PyObject* PyExc_InstructionLimitExceededError = NULL;
 static PyObject* PyUnicode_semicolon = NULL;
 static PyObject* PyUnicode_pipe = NULL;
 
@@ -235,10 +237,10 @@ static const OpcodeInfo OPCODE_INFO[29] = {
 
 /********** Utilities **********/
 
-#define CHECK(x)                                  do { if (!(x)) { goto cleanup; } } while (0)
-#define CHECK_ALLOCATION(x)                       do { if (!(x)) { PyErr_NoMemory(); goto cleanup; } } while (0)
-#define CHECK_WITH_MESSAGE(x, msg)                do { if (!(x)) { PyErr_SetString(PyExc_ExecutionError, msg); goto cleanup; } } while (0)
-#define CHECK_WITH_FORMATTED_MESSAGE(x, fmt, ...) do { if (!(x)) { PyErr_Format(PyExc_ExecutionError, fmt, __VA_ARGS__); goto cleanup; } } while (0)
+#define CHECK(x)                                       do { if (!(x)) { goto cleanup; } } while (0)
+#define CHECK_ALLOCATION(x)                            do { if (!(x)) { PyErr_NoMemory(); goto cleanup; } } while (0)
+#define CHECK_WITH_MESSAGE(x, exc, msg)                do { if (!(x)) { PyErr_SetString(exc, msg); goto cleanup; } } while (0)
+#define CHECK_WITH_FORMATTED_MESSAGE(x, exc, fmt, ...) do { if (!(x)) { PyErr_Format(exc, fmt, __VA_ARGS__); goto cleanup; } } while (0)
 
 
 /********** DSMValue **********/
@@ -292,7 +294,7 @@ static void DSMValue_uninit(DSMValue* v) {
     Py_XDECREF(v->str);
 }
 
-static int DSMValue_setFromString(DSMValue* v, const char* s, const char* friendlySource, mpd_context_t* ctx) {
+static int DSMValue_setFromString(DSMValue* v, const char* s, const char* friendlySource, mpd_context_t* ctx, PyObject* exc) {
     assert(mpd_isstatic(MPD(v)));
     assert(!v->str);
 
@@ -300,14 +302,16 @@ static int DSMValue_setFromString(DSMValue* v, const char* s, const char* friend
     uint32_t mpdStatus = 0;
     mpd_qset_string(MPD(v), s, ctx, &mpdStatus);
     CHECK_ALLOCATION(!(mpdStatus & MPD_Malloc_error));
-    CHECK_WITH_FORMATTED_MESSAGE(!(mpdStatus & MPD_Errors) && !mpd_isspecial(MPD(v)), "invalid %s value \"%s\"", friendlySource, s);
+    CHECK_WITH_FORMATTED_MESSAGE(
+        !(mpdStatus & MPD_Errors) && !mpd_isspecial(MPD(v)),
+        exc, "invalid %s value \"%s\"", friendlySource, s);
     success = 1;
 
 cleanup:
     return success;
 }
 
-static int DSMValue_setFromLongLong(DSMValue* v, PY_LONG_LONG ll, const char* friendlySource, mpd_context_t* ctx) {
+static int DSMValue_setFromLongLong(DSMValue* v, PY_LONG_LONG ll, const char* friendlySource, mpd_context_t* ctx, PyObject* exc) {
     assert(mpd_isstatic(MPD(v)));
     assert(!v->str);
 
@@ -315,7 +319,9 @@ static int DSMValue_setFromLongLong(DSMValue* v, PY_LONG_LONG ll, const char* fr
     uint32_t mpdStatus = 0;
     mpd_qset_i64(MPD(v), ll, ctx, &mpdStatus);
     CHECK_ALLOCATION(!(mpdStatus & MPD_Malloc_error));
-    CHECK_WITH_FORMATTED_MESSAGE(!(mpdStatus & MPD_Errors) && !mpd_isspecial(MPD(v)), "invalid %s value %lld", friendlySource, ll);
+    CHECK_WITH_FORMATTED_MESSAGE(
+        !(mpdStatus & MPD_Errors) && !mpd_isspecial(MPD(v)),
+        exc, "invalid %s value %lld", friendlySource, ll);
     success = 1;
 
 cleanup:
@@ -430,7 +436,7 @@ DECLARE_PYTYPEOBJECT_EX(DSMMachine, Machine);
 // Forward declarations.
 static void DSMMachine_dealloc(DSMMachine* machine);
 static DSMValue* DSMMachine_allocateArenaValue(DSMMachine* machine);
-static DSMValue* DSMMachine_createValueFromPythonObject(DSMMachine* machine, PyObject* obj, const char* friendlySource, mpd_context_t* ctx);
+static DSMValue* DSMMachine_createValueFromPythonObject(DSMMachine* machine, PyObject* obj, const char* friendlySource, mpd_context_t* ctx, PyObject* exc);
 static PyObject* DSMMachine_reset(DSMMachine* machine, PyObject* args, PyObject* kwargs);
 static PyObject* DSMMachine_subscript(DSMMachine* machine, PyObject* key);
 static int DSMMachine_ass_subscript(DSMMachine* machine, PyObject* key, PyObject* value);
@@ -499,7 +505,9 @@ static PyObject* DSMProgram_new(PyTypeObject* type, PyObject* args, PyObject* kw
     // Split program on semicolons.
     sectionsList = PyUnicode_Split(dsmal, PyUnicode_semicolon, -1);
     CHECK(sectionsList);
-    CHECK_WITH_MESSAGE(PyList_Size(sectionsList) == 3, "program must have variables, constants, and instructions sections");
+    CHECK_WITH_MESSAGE(
+        PyList_Size(sectionsList) == 3,
+        PyExc_InvalidProgramError, "program must have variables, constants, and instructions sections");
 
     // Allocate the DSMProgram object.
     program = (DSMProgram*)type->tp_alloc(type, 0);
@@ -580,8 +588,12 @@ static int DSMProgram_parseVariableNames(DSMProgram* program, PyObject* sectionS
         for (count = 0; count < allegedCount; count += 1) {
             PyObject* variableNameStr = PyList_GetItem(variableNamesList, count);
             CHECK(0 == PyUnicode_READY(variableNameStr));
-            CHECK_WITH_MESSAGE(PyUnicode_GET_LENGTH(variableNameStr) > 0, "invalid variable name \"\"");
-            CHECK_WITH_FORMATTED_MESSAGE(!PyDict_Contains(program->variableNameToSlotDict, variableNameStr), "duplicate variable name \"%U\"", variableNameStr);
+            CHECK_WITH_MESSAGE(
+                PyUnicode_GET_LENGTH(variableNameStr) > 0,
+                PyExc_InvalidProgramError, "invalid variable name \"\"");
+            CHECK_WITH_FORMATTED_MESSAGE(
+                !PyDict_Contains(program->variableNameToSlotDict, variableNameStr),
+                PyExc_InvalidProgramError, "duplicate variable name \"%U\"", variableNameStr);
             int addedToDict = 0;
             PyObject* slotNumber = PyLong_FromLongLong(count);
             if (slotNumber) {
@@ -628,12 +640,12 @@ static int DSMProgram_parseConstants(DSMProgram* program, PyObject* sectionStr) 
             PyObject* constantStr = PyList_GetItem(constantsList, count);
             CHECK(0 == PyUnicode_READY(constantStr));
             Py_ssize_t length = PyUnicode_GET_LENGTH(constantStr);
-            CHECK_WITH_MESSAGE(length, "invalid constant value \"\"");
+            CHECK_WITH_MESSAGE(length, PyExc_InvalidProgramError, "invalid constant value \"\"");
             const char* constantChars = PyUnicode_AsUTF8(constantStr);
             CHECK(constantChars);
             DSMValue_init(&program->constants[count]); // PyMem_Calloc() guarantees constants are zero-initialized
             program->constants[count].marked = 1; // constant lifetimes are controlled by the program lifetime
-            CHECK(DSMValue_setFromString(&program->constants[count], constantChars, "constant", &ctx));
+            CHECK(DSMValue_setFromString(&program->constants[count], constantChars, "constant", &ctx, PyExc_InvalidProgramError));
             program->constants[count].str = constantStr; Py_INCREF(constantStr);
         }
     }
@@ -679,7 +691,7 @@ static int DSMProgram_parseInstructions(DSMProgram* program, PyObject* sectionSt
         name[0] = input[i];
         if (!(name[0] >= 'A' && name[0] <= 'Z')) {
             name[1] = '\0';
-            PyErr_Format(PyExc_ExecutionError, "invalid instruction \"%s\"", name);
+            PyErr_Format(PyExc_InvalidProgramError, "invalid instruction \"%s\"", name);
             goto cleanup;
         }
         i += 1;
@@ -687,7 +699,7 @@ static int DSMProgram_parseInstructions(DSMProgram* program, PyObject* sectionSt
         name[1] = (i < inputLength) ? input[i] : '\0';
         if (!(name[1] >= 'a' && name[1] <= 'z')) {
             name[1] = '\0';
-            PyErr_Format(PyExc_ExecutionError, "invalid instruction \"%s\"", name);
+            PyErr_Format(PyExc_InvalidProgramError, "invalid instruction \"%s\"", name);
             goto cleanup;
         }
         i += 1;
@@ -723,7 +735,7 @@ static int DSMProgram_parseInstructions(DSMProgram* program, PyObject* sectionSt
             case OPCODE_NAME_AS_INT('P', 'w'): opcode = OP_POWER; break;
             case OPCODE_NAME_AS_INT('M', 'n'): opcode = OP_MIN; break;
             case OPCODE_NAME_AS_INT('M', 'x'): opcode = OP_MAX; break;
-            default: CHECK_WITH_FORMATTED_MESSAGE(0, "invalid instruction \"%s\"", name);
+            default: CHECK_WITH_FORMATTED_MESSAGE(0, PyExc_InvalidProgramError, "invalid instruction \"%s\"", name);
         }
         uint32_t param = 0;
         if (OPCODE_INFO[opcode].hasParam) {
@@ -731,15 +743,17 @@ static int DSMProgram_parseInstructions(DSMProgram* program, PyObject* sectionSt
                 char c = input[i];
                 if (c >= '0' && c <= '9') {
                     param = (param * 10) + (c - '0');
-                    CHECK_WITH_MESSAGE(param <= 0xFFFF, "instruction parameter is too large");
+                    CHECK_WITH_MESSAGE(param <= 0xFFFF, PyExc_InvalidProgramError, "instruction parameter is too large");
                 } else {
                     break;
                 }
             }
-            CHECK_WITH_FORMATTED_MESSAGE(opcode != OP_LOAD_CONSTANT || param < program->constantCount,
-                                         "reference to nonexistent constant slot %u", (unsigned int)param);
-            CHECK_WITH_FORMATTED_MESSAGE((opcode != OP_LOAD_VARIABLE && opcode != OP_SET_VARIABLE) || param < program->variableCount,
-                                         "reference to nonexistent variable slot %u", (unsigned int)param);
+            CHECK_WITH_FORMATTED_MESSAGE(
+                opcode != OP_LOAD_CONSTANT || param < program->constantCount,
+                PyExc_InvalidProgramError, "reference to nonexistent constant slot %u", (unsigned int)param);
+            CHECK_WITH_FORMATTED_MESSAGE(
+                (opcode != OP_LOAD_VARIABLE && opcode != OP_SET_VARIABLE) || param < program->variableCount,
+                PyExc_InvalidProgramError, "reference to nonexistent variable slot %u", (unsigned int)param);
         }
         program->instructions[count].opcode = opcode;
         program->instructions[count].param = (uint16_t)param;
@@ -761,7 +775,7 @@ static PyObject* DSMProgram_reduce(DSMProgram* program) {
 
 static PyObject* DSMProgram_createMachine(DSMProgram* program, PyObject* args, PyObject* kwargs) {
     if (args && PyTuple_GET_SIZE(args)) {
-        PyErr_SetString(PyExc_ExecutionError, "machine() does not accept positional parameters");
+        PyErr_SetString(PyExc_TypeError, "machine() does not accept positional parameters");
         return NULL;
     }
 
@@ -883,7 +897,7 @@ static DSMValue* DSMMachine_allocateArenaValue(DSMMachine* machine) {
     return &hv->value;
 }
 
-static DSMValue* DSMMachine_createValueFromPythonObject(DSMMachine* machine, PyObject* obj, const char* friendlySource, mpd_context_t* ctx) {
+static DSMValue* DSMMachine_createValueFromPythonObject(DSMMachine* machine, PyObject* obj, const char* friendlySource, mpd_context_t* ctx, PyObject* exc) {
 
     static DSMValue* const INTERNED_DIGITS[] = {
         NEG_INTERNED_DIGIT(9),
@@ -922,7 +936,7 @@ static DSMValue* DSMMachine_createValueFromPythonObject(DSMMachine* machine, PyO
                 return INTERNED_DIGITS[ll + 9];
             } else {
                 DSMValue* v = DSMMachine_allocateArenaValue(machine);
-                if (!v || !DSMValue_setFromLongLong(v, ll, friendlySource, ctx)) return NULL;
+                if (!v || !DSMValue_setFromLongLong(v, ll, friendlySource, ctx, exc)) return NULL;
                 return v;
             }
         }
@@ -934,14 +948,14 @@ static DSMValue* DSMMachine_createValueFromPythonObject(DSMMachine* machine, PyO
     PyObject* str = PyObject_Str(obj);
     if (!str) return NULL;
     const char* buffer = PyUnicode_AsUTF8(str);
-    int success = !!buffer && DSMValue_setFromString(v, buffer, friendlySource, ctx);
+    int success = !!buffer && DSMValue_setFromString(v, buffer, friendlySource, ctx, exc);
     Py_DECREF(str);
     return success ? v : NULL;
 }
 
 static PyObject* DSMMachine_reset(DSMMachine* machine, PyObject* args, PyObject* kwargs) {
     if (args && PyTuple_GET_SIZE(args)) {
-        PyErr_SetString(PyExc_ExecutionError, "reset() does not accept positional parameters");
+        PyErr_SetString(PyExc_TypeError, "reset() does not accept positional parameters");
         return NULL;
     }
 
@@ -964,16 +978,10 @@ static PyObject* DSMMachine_reset(DSMMachine* machine, PyObject* args, PyObject*
     return (PyObject*)machine;
 }
 
-static void PyErr_SetInvalidVariable(PyObject* key) {
-    PyObject* repr = PyObject_Repr(key);
-    PyErr_Format(PyExc_ExecutionError, "variable %s does not exist", repr ? PyUnicode_AsUTF8(repr) : "unknown");
-    Py_XDECREF(repr);
-}
-
 static PyObject* DSMMachine_subscript(DSMMachine* machine, PyObject* key) {
     PyObject* slotNumber = PyDict_GetItem(machine->program->variableNameToSlotDict, key);
     if (!slotNumber) {
-        PyErr_SetInvalidVariable(key);
+        PyErr_SetObject(PyExc_KeyError, key);
         return NULL;
     }
 
@@ -989,7 +997,7 @@ static PyObject* DSMMachine_subscript(DSMMachine* machine, PyObject* key) {
 static int DSMMachine_ass_subscript(DSMMachine* machine, PyObject* key, PyObject* value) {
     PyObject* slotNumber = PyDict_GetItem(machine->program->variableNameToSlotDict, key);
     if (!slotNumber) {
-        PyErr_SetInvalidVariable(key);
+        PyErr_SetObject(PyExc_KeyError, key);
         return -1;
     }
 
@@ -1000,7 +1008,7 @@ static int DSMMachine_ass_subscript(DSMMachine* machine, PyObject* key, PyObject
     }
 
     mpd_context_t ctx; mpd_defaultcontext(&ctx);
-    DSMValue* v = DSMMachine_createValueFromPythonObject(machine, value, "variable", &ctx);
+    DSMValue* v = DSMMachine_createValueFromPythonObject(machine, value, "variable", &ctx, PyExc_ValueError);
     if (!v) {
         return -1;
     }
@@ -1048,7 +1056,7 @@ static PyObject* DSMMachine_run_(DSMMachine* machine, int coverage) {
 #define PUSH(v) do { \
     DSMValue* _tmp = (v); \
     assert(_tmp); \
-    CHECK_WITH_MESSAGE(machine->stackUsed != STACK_SIZE, "ran out of stack"); \
+    CHECK_WITH_MESSAGE(machine->stackUsed != STACK_SIZE, PyExc_ExecutionError, "ran out of stack"); \
     machine->stack[machine->stackUsed] = _tmp; \
     machine->stackUsed += 1; \
 } while (0)
@@ -1065,8 +1073,12 @@ advance:
     pc += 1;
 
 execute:
-    CHECK_WITH_FORMATTED_MESSAGE(pc < instructionCount, "current execution location %zu is out-of-bounds", pc);
-    CHECK_WITH_FORMATTED_MESSAGE(instructionsExecuted != instructionLimit, "execution forcibly terminated after %zu instructions", instructionsExecuted);
+    CHECK_WITH_FORMATTED_MESSAGE(
+        pc < instructionCount,
+        PyExc_ExecutionError, "current execution location %zu is out-of-bounds", pc);
+    CHECK_WITH_FORMATTED_MESSAGE(
+        instructionsExecuted != instructionLimit,
+        PyExc_InstructionLimitExceededError, "execution forcibly terminated after %zu instructions", instructionsExecuted);
 
     if (coverageStats) {
         coverageStats[pc] = 1;
@@ -1085,6 +1097,7 @@ execute:
 
     CHECK_WITH_FORMATTED_MESSAGE(
         machine->stackUsed >= OPCODE_INFO[instruction->opcode].operands,
+        PyExc_ExecutionError,
         "instruction \"%s\" requires %zu operand(s), but the stack only has %zu",
         OPCODE_INFO[instruction->opcode].name, OPCODE_INFO[instruction->opcode].operands, machine->stackUsed);
 
@@ -1111,6 +1124,7 @@ execute:
         case OP_LOAD_CONSTANT: {
             CHECK_WITH_FORMATTED_MESSAGE(
                 instruction->param < machine->program->constantCount,
+                PyExc_ExecutionError,
                 "execution halted on reference to nonexistent constant slot %u at instruction %zu",
                 (unsigned int)instruction->param, pc);
             PUSH(&machine->program->constants[instruction->param]);
@@ -1120,6 +1134,7 @@ execute:
         case OP_LOAD_VARIABLE: {
             CHECK_WITH_FORMATTED_MESSAGE(
                 instruction->param < machine->program->variableCount,
+                PyExc_ExecutionError,
                 "execution halted on reference to nonexistent variable slot %u at instruction %zu",
                 (unsigned int)instruction->param, pc);
             PUSH(machine->variables[instruction->param]);
@@ -1137,7 +1152,9 @@ execute:
                 }
                 if (randomNumberIterator) {
                     Py_INCREF(randomNumberIterator); // decref during cleanup
-                    CHECK_WITH_MESSAGE(PyIter_Check(randomNumberIterator), "random_number_iterator is not an iterator");
+                    CHECK_WITH_MESSAGE(
+                        PyIter_Check(randomNumberIterator),
+                        PyExc_ExecutionError, "random_number_iterator is not an iterator");
                 }
             }
             DSMValue* v;
@@ -1146,8 +1163,8 @@ execute:
             } else {
                 v = NULL;
                 PyObject* random = PyIter_Next(randomNumberIterator);
-                CHECK_WITH_MESSAGE(random, "random_number_iterator ran out of values");
-                v = DSMMachine_createValueFromPythonObject(machine, random, "random number", &ctx);
+                CHECK_WITH_MESSAGE(random, PyExc_ExecutionError, "random_number_iterator ran out of values");
+                v = DSMMachine_createValueFromPythonObject(machine, random, "random number", &ctx, PyExc_ExecutionError);
                 Py_DECREF(random);
                 CHECK(v);
             }
@@ -1168,6 +1185,7 @@ execute:
         case OP_SET_VARIABLE: {
             CHECK_WITH_FORMATTED_MESSAGE(
                 instruction->param < machine->program->variableCount,
+                PyExc_ExecutionError,
                 "execution halted on reference to nonexistent variable slot %u at instruction %zu",
                 (unsigned int)instruction->param, pc);
             machine->variables[instruction->param] = POP();
@@ -1260,7 +1278,11 @@ execute:
         }
 
         default: {
-            CHECK_WITH_FORMATTED_MESSAGE(0, "execution halted on invalid opcode %u at instruction %zu", (unsigned int)instruction->opcode, pc);
+            CHECK_WITH_FORMATTED_MESSAGE(
+                0,
+                PyExc_ExecutionError,
+                "execution halted on invalid opcode %u at instruction %zu",
+                (unsigned int)instruction->opcode, pc);
         }
     }
 
@@ -1362,7 +1384,9 @@ PyMODINIT_FUNC CONCAT(PyInit_, MODULE_NAME)(void) {
     }
 
     // Initialize exception types.
+    DEFINE_EXCEPTION(InvalidProgramError, ValueError);
     DEFINE_EXCEPTION(ExecutionError, ValueError);
+    DEFINE_EXCEPTION(InstructionLimitExceededError, ExecutionError);
 
     // Initialize extension object types.
     if (!DSMMachine_initType() || !DSMProgram_initType()) {

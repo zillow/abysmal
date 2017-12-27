@@ -3,7 +3,7 @@
 
 .PHONY: help
 help:
-	@echo 'Usage: make [setup|develop|test|pylint|cover|clean]'
+	@echo 'Usage: make [setup|develop|pylint|test|cover|package|clean]'
 
 
 .PHONY: setup
@@ -16,6 +16,12 @@ develop:
 	pip install -e .
 
 
+.PHONY: pylint
+pylint:
+	pip install pylint
+	python3 -m pylint src/abysmal/*.py tests/*.py
+
+
 .PHONY: test
 test: develop
 	@echo '---------------------------------------------'
@@ -24,26 +30,26 @@ test: develop
 	python3 -m unittest -v tests/test_*.py
 
 
-.PHONY: pylint
-pylint: develop
-	pip install pylint
-	python3 -m pylint src/abysmal/*.py tests/*.py
-
-
 .PHONY: cover
 cover: develop
 	pip install coverage
-	python3 -E -m coverage run --branch --source 'abysmal' -m unittest tests/test_*.py
-	python3 -E -m coverage html -d $(abspath build/coverage)
-	python3 -E -m coverage report
+	python3 -m coverage run --branch --source 'abysmal' -m unittest tests/test_*.py
+	python3 -m coverage html -d $(abspath build/coverage)
+	python3 -m coverage report
 
 
 .PHONY: commit
 commit: pylint test cover
 
 
+.PHONY: package
+package:
+	python3 setup.py sdist
+
+
 .PHONY: clean
 clean:
+	python3 setup.py develop --uninstall
 	rm -rf \
 		.coverage \
 		build \
@@ -51,5 +57,5 @@ clean:
 		$$(find . -name '__pycache__') \
 		$$(find . -name '*.py[cod]') \
 		$$(find . -name '*.so') \
-		*.egg-info \
-		*.egg
+		src/*.egg-info \
+		src/*.egg

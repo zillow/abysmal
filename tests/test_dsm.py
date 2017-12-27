@@ -3,207 +3,212 @@ import itertools
 import pickle
 import unittest
 
-from abysmal import dsm
-from abysmal.dsm import Program, ExecutionError # pylint: disable=no-name-in-module
+from abysmal import dsm # pylint:disable=no-name-in-module
 
 
 class Test_dsm_Program(unittest.TestCase):
 
     def test_invalid_program_type(self):
         with self.assertRaises(TypeError):
-            Program(None)
+            dsm.Program(None)
 
     def test_missing_program_section(self):
         for program in ['', 'foo', ';123']:
-            with self.assertRaises(ExecutionError) as raised:
-                Program(program)
+            with self.assertRaises(dsm.InvalidProgramError) as raised:
+                dsm.Program(program)
             self.assertEqual(str(raised.exception), 'program must have variables, constants, and instructions sections')
 
     def test_invalid_variable_name(self):
-        with self.assertRaises(ExecutionError) as raised:
-            Program('|bar;;Xx')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program('|bar;;Xx')
         self.assertEqual(str(raised.exception), 'invalid variable name ""')
 
     def test_duplicate_variable_name(self):
-        with self.assertRaises(ExecutionError) as raised:
-            Program('foo|foo;;Xx')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program('foo|foo;;Xx')
         self.assertEqual(str(raised.exception), 'duplicate variable name "foo"')
 
     def test_invalid_constant_slot(self):
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';;Lc0Xx')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';;Lc0Xx')
         self.assertEqual(str(raised.exception), 'reference to nonexistent constant slot 0')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';100|200|300;Lc3Xx')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';100|200|300;Lc3Xx')
         self.assertEqual(str(raised.exception), 'reference to nonexistent constant slot 3')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';100|200|300;Lc123Xx')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';100|200|300;Lc123Xx')
         self.assertEqual(str(raised.exception), 'reference to nonexistent constant slot 123')
 
     def test_invalid_constant_value(self):
         for v in ['NaN', 'Inf', 'Infinity', '-Inf', '-Infinity']:
-            with self.assertRaises(ExecutionError) as raised:
-                Program(';{0};Xx'.format(v))
+            with self.assertRaises(dsm.InvalidProgramError) as raised:
+                dsm.Program(';{0};Xx'.format(v))
 
             self.assertEqual(str(raised.exception), 'invalid constant value "{0}"'.format(v))
 
         for program in [';|123;Xx', ';123|;Xx']:
-            with self.assertRaises(ExecutionError) as raised:
-                Program(program)
+            with self.assertRaises(dsm.InvalidProgramError) as raised:
+                dsm.Program(program)
             self.assertEqual(str(raised.exception), 'invalid constant value ""')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';bogus;Xx')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';bogus;Xx')
         self.assertEqual(str(raised.exception), 'invalid constant value "bogus"')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';123|3.14159|bogus;Xx')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';123|3.14159|bogus;Xx')
         self.assertEqual(str(raised.exception), 'invalid constant value "bogus"')
 
     def test_constants(self):
-        self.assertEqual(Program(';0|-0|1|-1|0.3|3.13159|-100000000.0000000001;Xx').machine().run(), 1)
+        self.assertEqual(dsm.Program(';0|-0|1|-1|0.3|3.13159|-100000000.0000000001;Xx').machine().run(), 1)
 
     def test_minimal_program(self):
-        self.assertEqual(Program(';;Xx').machine().run(), 1)
+        self.assertEqual(dsm.Program(';;Xx').machine().run(), 1)
 
     def test_stack_overflow(self):
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';;' + ('Lz' * 8000) + 'Xx').machine().run()
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';;' + ('Lz' * 8000) + 'Xx').machine().run()
         self.assertEqual(str(raised.exception), 'ran out of stack')
 
     def test_heap_overflow(self):
-        with self.assertRaises(ExecutionError) as raised:
+        with self.assertRaises(dsm.ExecutionError) as raised:
             variable_names = '|'.join(('v' + str(i)) for i in range(1000))
             instructions = ''.join(
                 'Lv{0}Lv{1}AdSt{2}'.format(i, i + 1, i + 2) # look, Fibonacci!
                 for i in range(998)
             )
-            Program(variable_names + ';;LoSt0LoSt1' + instructions + 'Xx').machine().run()
+            dsm.Program(variable_names + ';;LoSt0LoSt1' + instructions + 'Xx').machine().run()
         self.assertEqual(str(raised.exception), 'ran out of space')
 
     def test_infinite_loop(self):
-        with self.assertRaises(ExecutionError) as raised:
-            machine = Program(';;Ju0').machine()
+        with self.assertRaises(dsm.InstructionLimitExceededError) as raised:
+            machine = dsm.Program(';;Ju0').machine()
             machine.instruction_limit = 100
             machine.run()
         self.assertEqual(str(raised.exception), 'execution forcibly terminated after 100 instructions')
 
     def test_execution_out_of_bounds(self):
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';123;Lc0').machine().run()
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';123;Lc0').machine().run()
         self.assertEqual(str(raised.exception), 'current execution location 1 is out-of-bounds')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';;Ju2Xx').machine().run()
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';;Ju2Xx').machine().run()
         self.assertEqual(str(raised.exception), 'current execution location 2 is out-of-bounds')
 
     def test_invalid_instruction(self):
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';;?')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';;?')
         self.assertEqual(str(raised.exception), 'invalid instruction "?"')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';;XX')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';;XX')
         self.assertEqual(str(raised.exception), 'invalid instruction "X"')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';;X0')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';;X0')
         self.assertEqual(str(raised.exception), 'invalid instruction "X"')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';;Xy')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';;Xy')
         self.assertEqual(str(raised.exception), 'invalid instruction "Xy"')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';;0')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';;0')
         self.assertEqual(str(raised.exception), 'invalid instruction "0"')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';;01')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';;01')
         self.assertEqual(str(raised.exception), 'invalid instruction "0"')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';;0X')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';;0X')
         self.assertEqual(str(raised.exception), 'invalid instruction "0"')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';;Ju1Lx')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';;Ju1Lx')
         self.assertEqual(str(raised.exception), 'invalid instruction "Lx"')
 
     def test_instruction_parameter_overflow(self):
         for param in ['65536', '123123123123']:
-            with self.assertRaises(ExecutionError) as raised:
-                Program(';;Lc' + param)
+            with self.assertRaises(dsm.InvalidProgramError) as raised:
+                dsm.Program(';;Lc' + param)
             self.assertEqual(str(raised.exception), 'instruction parameter is too large')
 
     def test_invalid_variable_slot(self):
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';;Lv0Xx')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';;Lv0Xx')
         self.assertEqual(str(raised.exception), 'reference to nonexistent variable slot 0')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program('a|b|c;;Lv3Xx')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program('a|b|c;;Lv3Xx')
         self.assertEqual(str(raised.exception), 'reference to nonexistent variable slot 3')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program('a|b|c;;Lv123Xx')
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program('a|b|c;;Lv123Xx')
         self.assertEqual(str(raised.exception), 'reference to nonexistent variable slot 123')
 
     def test_insufficient_operands(self):
         for instruction in ['Jn', 'St', 'Cp', 'Pp', 'Nt', 'Ng', 'Ab', 'Cl', 'Fl', 'Rd']:
-            with self.assertRaises(ExecutionError) as raised:
-                Program('a;;' + instruction).machine().run()
+            with self.assertRaises(dsm.ExecutionError) as raised:
+                dsm.Program('a;;' + instruction).machine().run()
             self.assertEqual(str(raised.exception), 'instruction "{0}" requires 1 operand(s), but the stack only has 0'.format(instruction))
 
         for instruction in ['Eq', 'Gt', 'Ge', 'Ad', 'Sb', 'Ml', 'Dv', 'Pw', 'Mn', 'Mx']:
-            with self.assertRaises(ExecutionError) as raised:
-                Program('a;;' + instruction).machine().run()
+            with self.assertRaises(dsm.ExecutionError) as raised:
+                dsm.Program('a;;' + instruction).machine().run()
             self.assertEqual(str(raised.exception), 'instruction "{0}" requires 2 operand(s), but the stack only has 0'.format(instruction))
 
-            with self.assertRaises(ExecutionError) as raised:
-                Program(';123;Lc0' + instruction).machine().run()
+            with self.assertRaises(dsm.ExecutionError) as raised:
+                dsm.Program(';123;Lc0' + instruction).machine().run()
             self.assertEqual(str(raised.exception), 'instruction "{0}" requires 2 operand(s), but the stack only has 1'.format(instruction))
 
     def test_invalid_variable_value(self):
         for v in ['NaN', 'Inf', 'Infinity', '-Inf', '-Infinity']:
-            with self.assertRaises(ExecutionError) as raised:
-                Program('foo;;Xx').machine(foo=v)
+            with self.assertRaises(ValueError) as raised:
+                dsm.Program('foo;;Xx').machine(foo=v)
             self.assertEqual(str(raised.exception), 'invalid variable value "{0}"'.format(v))
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program('foo;;Xx').machine(foo='bogus')
+        with self.assertRaises(ValueError) as raised:
+            dsm.Program('foo;;Xx').machine(foo='bogus')
         self.assertEqual(str(raised.exception), 'invalid variable value "bogus"')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program('foo;;Xx').machine()['foo'] = 'bogus'
+        with self.assertRaises(ValueError) as raised:
+            dsm.Program('foo;;Xx').machine()['foo'] = 'bogus'
         self.assertEqual(str(raised.exception), 'invalid variable value "bogus"')
 
     def test_variables_positional_parameter(self):
-        with self.assertRaises(ExecutionError) as raised:
-            Program('foo|bar;;Xx').machine(32)
+        with self.assertRaises(TypeError) as raised:
+            dsm.Program('foo|bar;;Xx').machine(32)
         self.assertEqual(str(raised.exception), 'machine() does not accept positional parameters')
 
+        machine = dsm.Program('foo|bar;;Xx').machine()
+        with self.assertRaises(TypeError) as raised:
+            machine.reset(32)
+        self.assertEqual(str(raised.exception), 'reset() does not accept positional parameters')
+
     def test_nonexistent_variable_key(self):
-        program = Program('foo;;Xx')
-        with self.assertRaises(ExecutionError) as raised:
+        program = dsm.Program('foo;;Xx')
+        with self.assertRaises(KeyError) as raised:
             program.machine(bogus=42)
-        self.assertEqual(str(raised.exception), 'variable \'bogus\' does not exist')
+        self.assertEqual(str(raised.exception), repr('bogus'))
 
-        with self.assertRaises(ExecutionError) as raised:
-            program.machine()['bogus'] = 42
-        self.assertEqual(str(raised.exception), 'variable \'bogus\' does not exist')
-
-        with self.assertRaises(ExecutionError) as raised:
+        with self.assertRaises(KeyError) as raised:
             program.machine().reset(bogus=42)
-        self.assertEqual(str(raised.exception), 'variable \'bogus\' does not exist')
+        self.assertEqual(str(raised.exception), repr('bogus'))
+
+        for key in ['bogus', 0, object()]:
+            with self.assertRaises(KeyError) as raised:
+                program.machine()[key] = 42
+            self.assertEqual(str(raised.exception), repr(key))
 
     def test_variables(self):
-        machine = Program(';;Xx').machine()
+        machine = dsm.Program(';;Xx').machine()
         self.assertEqual(len(machine), 0)
 
-        machine = Program('foo|bar|baz|wow;;Xx').machine()
+        machine = dsm.Program('foo|bar|baz|wow;;Xx').machine()
         self.assertEqual(machine['foo'], '0')
         self.assertEqual(machine['bar'], '0')
         self.assertEqual(machine['baz'], '0')
@@ -221,15 +226,15 @@ class Test_dsm_Program(unittest.TestCase):
         self.assertIn(machine['wow'], ['73786976294838206464', '7.37869762948382065e+19'])
 
     def test_Xx(self):
-        self.assertEqual(Program(';;Xx').machine().run(), 1)
+        self.assertEqual(dsm.Program(';;Xx').machine().run(), 1)
 
     def test_Ju(self):
-        machine = Program('a;42;Ju3Lc0St0Xx').machine()
+        machine = dsm.Program('a;42;Ju3Lc0St0Xx').machine()
         self.assertEqual(machine.run(), 2)
         self.assertEqual(machine['a'], '0')
 
     def test_Jn(self):
-        machine = Program('a|b;42;Lv0Jn4Lc0St1Xx').machine(a=1)
+        machine = dsm.Program('a|b;42;Lv0Jn4Lc0St1Xx').machine(a=1)
         self.assertEqual(machine.run(), 3)
         self.assertEqual(machine['a'], '1')
         self.assertEqual(machine['b'], '0')
@@ -240,7 +245,7 @@ class Test_dsm_Program(unittest.TestCase):
         self.assertEqual(machine['b'], '42')
 
     def test_Jz(self):
-        machine = Program('a|b;42;Lv0Jz4Lc0St1Xx').machine(a=1)
+        machine = dsm.Program('a|b;42;Lv0Jz4Lc0St1Xx').machine(a=1)
         self.assertEqual(machine.run(), 5)
         self.assertEqual(machine['a'], '1')
         self.assertEqual(machine['b'], '42')
@@ -251,19 +256,19 @@ class Test_dsm_Program(unittest.TestCase):
         self.assertEqual(machine['b'], '0')
 
     def test_Lc(self):
-        machine = Program('a|b;42|3.14;Lc0St0Lc1St1Xx').machine()
+        machine = dsm.Program('a|b;42|3.14;Lc0St0Lc1St1Xx').machine()
         self.assertEqual(machine.run(), 5)
         self.assertEqual(machine['a'], '42')
         self.assertEqual(machine['b'], '3.14')
 
     def test_Lv(self):
-        machine = Program('a|b;;Lv0St1Xx').machine(a=42)
+        machine = dsm.Program('a|b;;Lv0St1Xx').machine(a=42)
         self.assertEqual(machine.run(), 3)
         self.assertEqual(machine['a'], '42')
         self.assertEqual(machine['b'], '42')
 
     def test_Lr(self):
-        machine = Program('a|b|c|d;;LrSt0LrSt1LrSt2LrSt3Xx').machine()
+        machine = dsm.Program('a|b|c|d;;LrSt0LrSt1LrSt2LrSt3Xx').machine()
 
         default_random_number_iterator = dsm.random_number_iterator
         try:
@@ -293,54 +298,54 @@ class Test_dsm_Program(unittest.TestCase):
         self.assertEqual(machine['c'], '0.5')
         self.assertEqual(machine['d'], '3.14')
 
-        with self.assertRaises(ExecutionError) as raised:
+        with self.assertRaises(dsm.ExecutionError) as raised:
             machine.random_number_iterator = 42
             machine.run()
         self.assertEqual(str(raised.exception), 'random_number_iterator is not an iterator')
 
-        with self.assertRaises(ExecutionError) as raised:
+        with self.assertRaises(dsm.ExecutionError) as raised:
             machine.random_number_iterator = iter(['bogus'])
             machine.run()
         self.assertEqual(str(raised.exception), 'invalid random number value "bogus"')
 
-        with self.assertRaises(ExecutionError) as raised:
+        with self.assertRaises(dsm.ExecutionError) as raised:
             machine.random_number_iterator = iter(['1'])
             machine.run()
         self.assertEqual(str(raised.exception), 'random_number_iterator ran out of values')
 
     def test_Lz(self):
-        machine = Program('a;;LzSt0Xx').machine()
+        machine = dsm.Program('a;;LzSt0Xx').machine()
         self.assertEqual(machine.run(), 3)
         self.assertEqual(machine['a'], '0')
 
     def test_Lo(self):
-        machine = Program('a;;LoSt0Xx').machine()
+        machine = dsm.Program('a;;LoSt0Xx').machine()
         self.assertEqual(machine.run(), 3)
         self.assertEqual(machine['a'], '1')
 
     def test_St(self):
-        machine = Program('a;42;Lc0St0Xx').machine()
+        machine = dsm.Program('a;42;Lc0St0Xx').machine()
         self.assertEqual(machine.run(), 3)
         self.assertEqual(machine['a'], '42')
 
     def test_Cp(self):
-        machine = Program('a;;Lv0CpAdSt0Xx').machine(a=3)
+        machine = dsm.Program('a;;Lv0CpAdSt0Xx').machine(a=3)
         self.assertEqual(machine.run(), 5)
         self.assertEqual(machine['a'], '6')
 
     def test_Pp(self):
-        machine = Program('a;;LoLzPpSt0Xx').machine()
+        machine = dsm.Program('a;;LoLzPpSt0Xx').machine()
         self.assertEqual(machine.run(), 5)
         self.assertEqual(machine['a'], '1')
 
     def run_unop_instruction(self, instruction, cases):
-        machine = Program('operand|result;;Lv0' + instruction + 'St1Xx').machine()
+        machine = dsm.Program('operand|result;;Lv0' + instruction + 'St1Xx').machine()
         for machine['operand'], expected_result in cases:
             self.assertEqual(machine.run(), 4)
             self.assertEqual(Decimal(machine['result']), Decimal(expected_result))
 
     def run_binop_instruction(self, instruction, cases):
-        machine = Program('operand1|operand2|result;;Lv0Lv1' + instruction + 'St2Xx').machine()
+        machine = dsm.Program('operand1|operand2|result;;Lv0Lv1' + instruction + 'St2Xx').machine()
         for machine['operand1'], machine['operand2'], expected_result in cases:
             self.assertEqual(machine.run(), 5)
             if isinstance(expected_result, (list, tuple)):
@@ -493,26 +498,26 @@ class Test_dsm_Program(unittest.TestCase):
         ])
 
     def test_Dv(self):
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';0;Lc0CpDvXx').machine().run()
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';0;Lc0CpDvXx').machine().run()
         self.assertEqual(str(raised.exception), 'illegal Dv at instruction 2')
         self.assertEqual(raised.exception.instruction, 2)
         self.assertEqual(raised.exception.opcode, 'Dv')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';5|0;Lc0Lc1DvXx').machine().run()
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';5|0;Lc0Lc1DvXx').machine().run()
         self.assertEqual(str(raised.exception), 'illegal Dv at instruction 2')
         self.assertEqual(raised.exception.instruction, 2)
         self.assertEqual(raised.exception.opcode, 'Dv')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';5.00000|0.000000;Lc0Lc1DvXx').machine().run()
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';5.00000|0.000000;Lc0Lc1DvXx').machine().run()
         self.assertEqual(str(raised.exception), 'illegal Dv at instruction 2')
         self.assertEqual(raised.exception.instruction, 2)
         self.assertEqual(raised.exception.opcode, 'Dv')
 
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';5|-0;Lc0Lc1DvXx').machine().run()
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';5|-0;Lc0Lc1DvXx').machine().run()
         self.assertEqual(str(raised.exception), 'illegal Dv at instruction 2')
         self.assertEqual(raised.exception.instruction, 2)
         self.assertEqual(raised.exception.opcode, 'Dv')
@@ -525,8 +530,8 @@ class Test_dsm_Program(unittest.TestCase):
         ])
 
     def test_Pw(self):
-        with self.assertRaises(ExecutionError) as raised:
-            Program(';0;Lc0CpPwXx').machine().run()
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';0;Lc0CpPwXx').machine().run()
         self.assertEqual(str(raised.exception), 'illegal Pw at instruction 2')
         self.assertEqual(raised.exception.instruction, 2)
         self.assertEqual(raised.exception.opcode, 'Pw')
@@ -561,7 +566,7 @@ class Test_dsm_Program(unittest.TestCase):
         ])
 
     def test_run(self):
-        machine = Program('radius|area|diameter;3.14|2;Lv0Lv0MlLc0MlSt1Lv0Lc1MlLc0MlSt2Xx').machine(radius=3)
+        machine = dsm.Program('radius|area|diameter;3.14|2;Lv0Lv0MlLc0MlSt1Lv0Lc1MlLc0MlSt2Xx').machine(radius=3)
         self.assertEqual(machine.run(), 13)
         self.assertEqual(machine['area'], '28.26')
         self.assertEqual(machine['diameter'], '18.84')
@@ -624,7 +629,7 @@ class Test_dsm_Program(unittest.TestCase):
         # Make sure all instructions are covered by the test matrix.
 
         def coverage_check():
-            machine = Program(dsmal).machine()
+            machine = dsm.Program(dsmal).machine()
             self.assertNotIn(False, [any(v) for v in zip(*[
                 machine.reset(**case).run_with_coverage()
                 for case in cases
@@ -635,7 +640,7 @@ class Test_dsm_Program(unittest.TestCase):
         # Run the cases a bunch of times and make sure no memory leaks.
 
         def leak_check():
-            reusable_machine = Program(dsmal).machine()
+            reusable_machine = dsm.Program(dsmal).machine()
             for _ in range(10000):
                 for case in cases:
 
@@ -668,7 +673,7 @@ class Test_dsm_Program(unittest.TestCase):
                     )
 
                     # Single-use machine
-                    one_time_machine = Program(dsmal).machine(**case)
+                    one_time_machine = dsm.Program(dsmal).machine(**case)
                     one_time_machine.run()
                     _ = ( # force variable values to be converted to strings
                         one_time_machine['x'],
@@ -699,7 +704,7 @@ class Test_dsm_Program(unittest.TestCase):
         leak_check()
 
     def test_coverage(self):
-        machine = Program('a|b|multiply|c;;Lv0Lv1Lv2Jn6AdJu7MlSt3Xx').machine(a=3, b=5, multiply=0)
+        machine = dsm.Program('a|b|multiply|c;;Lv0Lv1Lv2Jn6AdJu7MlSt3Xx').machine(a=3, b=5, multiply=0)
         self.assertEqual(machine.run_with_coverage(), (True, True, True, True, True, True, False, True, True))
         self.assertEqual(machine['c'], '8')
 
@@ -708,10 +713,10 @@ class Test_dsm_Program(unittest.TestCase):
         self.assertEqual(machine['c'], '15')
 
     def test_dsmal_attr(self):
-        self.assertEqual(Program(';;Xx').dsmal, ';;Xx')
+        self.assertEqual(dsm.Program(';;Xx').dsmal, ';;Xx')
 
     def test_pickle(self):
-        program1 = Program('radius|area|diameter;3.14|2;Lv0Lv0MlLc0MlSt1Lv0Lc1MlLc0MlSt2Xx')
+        program1 = dsm.Program('radius|area|diameter;3.14|2;Lv0Lv0MlLc0MlSt1Lv0Lc1MlLc0MlSt2Xx')
         for protocol in (2, 3, 4):
             p = pickle.dumps(program1, protocol=protocol)
             program2 = pickle.loads(p)

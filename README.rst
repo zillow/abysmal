@@ -252,8 +252,8 @@ Usage
 -----
 
 An Abysmal program must be compiled before it can be run. The compiler needs
-to know the variable names that the program should have access to, and
-the values of any constants you want to define:
+to know the names of the variables that the program should have access to
+and names and values of any constants you want to define:
 
 .. code-block:: python
 
@@ -312,7 +312,7 @@ Next, we can set any variables as we see fit:
     )
 
     # ... or one at a time (though this is less efficient)
-    machine['sprinkles'] = True
+    machine['sprinkles'] = True  # automatically converted to '1'
 
 Finally, we can run the machine and examine final variable values:
 
@@ -357,13 +357,16 @@ Errors
 ------
 
 `abysmal.CompilationError`
-    raised by `abysmal.compile()`
+    raised by `abysmal.compile()` if the source code cannot be compiled
 `abysmal.ExecutionError`
     raised by `machine.run()` and `machine.run_with_coverage()`
     if a program encounters an error while running; this includes conditions
     such as: division by zero, invalid exponentiation, stack overflow,
-    out-of-space, instruction limit exceeded, and failure to generate a
-    random number
+    out-of-space, and failure to generate a random number
+`abysmal.InstructionLimitExceededError`
+    raised by `machine.run()` and `machine.run_with_coverage()`
+    if a program exceeds its allowed instruction count and is aborted;
+    this error is a subclass of `abysmal.ExecutionError`
 
 
 Performance Tips
@@ -413,7 +416,7 @@ attribute of a machine:
 
     machine.instruction_limit = 5000
 
-If a program exceeds its instruction limit, it will raise an `abysmal.ExecutionError`.
+If a program exceeds its instruction limit, it will raise an `abysmal.InstructionLimitExceededError`.
 
 The default instruction limit is 10000.
 
@@ -472,7 +475,7 @@ Development
 
 .. code-block:: console
 
-    # Install system dependencies (only necessary once)
+    # Install system-level dependencies on Debian/Ubuntu
     make setup
 
     # Run unit tests
@@ -483,3 +486,6 @@ Development
 
     # Check code coverage
     make cover
+
+    # Create sdist package
+    make package

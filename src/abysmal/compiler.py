@@ -4,7 +4,7 @@ import itertools
 import math
 import re
 
-from . import dsm
+from . import dsm # pylint:disable=no-name-in-module
 
 
 DECIMAL_ZERO = Decimal('0')
@@ -649,7 +649,7 @@ class Parser(object):
                 self.line_continuations = 0
             iter_line_tokens = iter(self.TOKENIZER_REGEX.finditer(line))
             while True:
-                m = next(iter_line_tokens, None)
+                m = next(iter_line_tokens, None) # pylint: disable=stop-iteration-return
                 if m is None:
                     break
                 if m.group('label'):
@@ -671,7 +671,7 @@ class Parser(object):
                 elif m.group('comment') or m.group('blankline'):
                     break
                 elif m.group('linecontinuation'):
-                    m = next(iter_line_tokens, None)
+                    m = next(iter_line_tokens, None) # pylint: disable=stop-iteration-return
                     if m is not None and not m.group('comment') and not m.group('blankline'):
                         raise CompilationError(
                             'unexpected text after line-continuation character',
@@ -716,7 +716,7 @@ class Parser(object):
         return Branch(condition, destination, self.line_number_or_range)
 
     # See _parse_expression for details.
-    def _nud(self, t):
+    def _nud(self, t): # pylint: disable=inconsistent-return-statements
         if t.type == 'identifier':
             if self.token.type == '(':
                 if t.value in FunctionCall.FUNCTIONS:
@@ -785,7 +785,7 @@ class Parser(object):
             t.unexpected()
 
     # See _parse_expression for details.
-    def _led(self, t, left):
+    def _led(self, t, left): # pylint: disable=inconsistent-return-statements
         if t.type == '=':
             if self.in_assignment:
                 raise CompilationError('chained assignment is not allowed - did you mean == instead?', line_number=t.line_number, char_number=t.char_number)

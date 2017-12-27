@@ -16,3 +16,10 @@ Changelog
 ------------------
 
 * Minor API tweaks.
+
+0.4.0 (2017-12-27)
+------------------
+
+* More appropriate error classes for various scenarios.
+* Tweaks to deal with spurious warnings from new pylint version.
+* Documentation updates.

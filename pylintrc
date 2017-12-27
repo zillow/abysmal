@@ -53,6 +53,7 @@ confidence=
 disable=locally-disabled,
  bare-except,
  broad-except,
+ c-extension-no-member,
  duplicate-code,
  fixme,
  global-statement,

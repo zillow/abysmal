@@ -1245,11 +1245,11 @@ let temp = 0
             line_number = source_map[idx_instruction]
             self.assertTrue(hit or line_number is None, line_number)
 
-    def test_parse_number(self):
-        self.assertEqual(abysmal.compiler.parse_number('0'), Decimal(0))
-        self.assertEqual(abysmal.compiler.parse_number('1.5'), Decimal('1.5'))
-        self.assertEqual(abysmal.compiler.parse_number('3.14159'), Decimal('3.14159'))
-        self.assertEqual(abysmal.compiler.parse_number('15.3%'), Decimal('0.153'))
-        self.assertEqual(abysmal.compiler.parse_number('1k'), Decimal('1000'))
-        self.assertEqual(abysmal.compiler.parse_number('2.5M'), Decimal('2500000'))
-        self.assertIsNone(abysmal.compiler.parse_number('bogus'))
+    def test_canonicalize_number_literal(self):
+        self.assertEqual(abysmal.compiler.canonicalize_number_literal('0'), Decimal(0))
+        self.assertEqual(abysmal.compiler.canonicalize_number_literal('1.5'), Decimal('1.5'))
+        self.assertEqual(abysmal.compiler.canonicalize_number_literal('3.14159'), Decimal('3.14159'))
+        self.assertEqual(abysmal.compiler.canonicalize_number_literal('15.3%'), Decimal('0.153'))
+        self.assertEqual(abysmal.compiler.canonicalize_number_literal('1k'), Decimal('1000'))
+        self.assertEqual(abysmal.compiler.canonicalize_number_literal('2.5M'), Decimal('2500000'))
+        self.assertIsNone(abysmal.compiler.canonicalize_number_literal('bogus'))

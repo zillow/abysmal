@@ -83,6 +83,7 @@ class Test_coverage(unittest.TestCase):
             weekday=ICE_CREAM_CONSTANTS['SATURDAY']
         )
         machine.random_number_iterator = itertools.cycle([1]) # random! is always 1
+
         coverage_tuples = [
             machine.reset(flavor=flavor, scoops=scoops, cone=cone).run_with_coverage()
             for flavor in [ICE_CREAM_CONSTANTS['VANILLA'], ICE_CREAM_CONSTANTS['CHOCOLATE']]
@@ -92,7 +93,16 @@ class Test_coverage(unittest.TestCase):
         self.assertEqual(
             abysmal.get_uncovered_lines(source_map, coverage_tuples),
             abysmal.CoverageReport(
-                partially_covered_line_numbers=(19, 20, 23),
-                uncovered_line_numbers=(27, 28, 31)
+                partially_covered_line_numbers=[19, 20, 23],
+                uncovered_line_numbers=[27, 28, 31]
+            )
+        )
+
+        # No runs means all lines are uncovered.
+        self.assertEqual(
+            abysmal.get_uncovered_lines(source_map, []),
+            abysmal.CoverageReport(
+                partially_covered_line_numbers=[],
+                uncovered_line_numbers=[18, 19, 20, 21, 22, 23, 24, 27, 28, 31, 34]
             )
         )

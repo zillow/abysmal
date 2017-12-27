@@ -1144,9 +1144,9 @@ class CodeGenerator(object):
         return (program, source_map)
 
 
-def parse_number(s):
+def canonicalize_number_literal(s):
     """
-    Parses a number literal from an Absymal program.
+    Canonicalizes a number literal from an Absymal program.
 
     Returns the canonical string format of the parsed number,
     or None if parsing failed.

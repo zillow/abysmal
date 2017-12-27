@@ -11,3 +11,8 @@ Changelog
 ------------------
 
 * Provide default random number iterator automatically.
+
+0.3.0 (2017-12-26)
+------------------
+
+* Minor API tweaks.

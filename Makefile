@@ -43,7 +43,7 @@ commit: pylint test cover
 
 
 .PHONY: package
-package:
+package: clean
 	python3 setup.py sdist
 
 

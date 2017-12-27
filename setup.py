@@ -5,7 +5,6 @@ from __future__ import print_function
 
 import io
 import os
-import re
 import sys
 from glob import glob
 from os.path import basename, dirname, join, relpath, splitext
@@ -30,7 +29,7 @@ def read(*names, **kwargs):
 
 setup(
     name='abysmal',
-    version='0.4.0',
+    version='1.0.0',
 
     license='MIT license',
     url='https://github.com/zillow/abysmal',
@@ -57,6 +56,8 @@ setup(
     ],
 
     keywords=['absymal', 'programming', 'language'],
+
+    python_requires='>= 3.5',
 
     packages=find_packages('src'),
     package_dir={'': 'src'},

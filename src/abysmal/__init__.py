@@ -1,4 +1,4 @@
-__version__ = '1.0.0'
+__version__ = '1.1.0'
 
 
 # import dependencies using private aliases to avoid "exporting" them

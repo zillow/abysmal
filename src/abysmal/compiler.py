@@ -284,44 +284,26 @@ class TerOp(namedtuple('TerOp', ['question', 'yes', 'no'])):
         return self.yes if self.question.value else self.no
 
 
-class SetMembership(namedtuple('SetMembership', ['operand', 'op', 'members'])):
+class SetMembership(namedtuple('SetMembership', ['operand', 'members'])):
 
     __slots__ = ()
 
     def emit(self, code_generator):
-        if self.op == 'in':
-            true_label = code_generator.allocate_label()
-            after_label = code_generator.allocate_label()
-            self.operand.emit(code_generator)
-            for member in self.members:
-                code_generator.emit('Cp')
-                member.emit(code_generator)
-                code_generator.emit('Eq')
-                code_generator.emit('Jn', true_label)
-            code_generator.emit('Pp')
-            code_generator.emit('Lz')
-            code_generator.emit('Ju', after_label)
-            code_generator.label_next_instruction(true_label)
-            code_generator.emit('Pp')
-            code_generator.emit('Lo')
-            code_generator.label_next_instruction(after_label)
-        else:
-            assert self.op == 'not in'
-            false_label = code_generator.allocate_label()
-            after_label = code_generator.allocate_label()
-            self.operand.emit(code_generator)
-            for member in self.members:
-                code_generator.emit('Cp')
-                member.emit(code_generator)
-                code_generator.emit('Eq')
-                code_generator.emit('Jn', false_label)
-            code_generator.emit('Pp')
-            code_generator.emit('Lo')
-            code_generator.emit('Ju', after_label)
-            code_generator.label_next_instruction(false_label)
-            code_generator.emit('Pp')
-            code_generator.emit('Lz')
-            code_generator.label_next_instruction(after_label)
+        true_label = code_generator.allocate_label()
+        after_label = code_generator.allocate_label()
+        self.operand.emit(code_generator)
+        for member in self.members:
+            code_generator.emit('Cp')
+            member.emit(code_generator)
+            code_generator.emit('Eq')
+            code_generator.emit('Jn', true_label)
+        code_generator.emit('Pp')
+        code_generator.emit('Lz')
+        code_generator.emit('Ju', after_label)
+        code_generator.label_next_instruction(true_label)
+        code_generator.emit('Pp')
+        code_generator.emit('Lo')
+        code_generator.label_next_instruction(after_label)
 
     def rewrite(self, fn):
         return fn(self._replace(operand=self.operand.rewrite(fn), members=[member.rewrite(fn) for member in self.members]))
@@ -334,12 +316,53 @@ class SetMembership(namedtuple('SetMembership', ['operand', 'op', 'members'])):
         for member in self.members:
             if isinstance(member, Literal):
                 if operand_value == member.value:
-                    return Literal(DECIMAL_ONE if self.op == 'in' else DECIMAL_ZERO, None)
+                    return Literal(DECIMAL_ONE, None)
             else:
                 nonliteral_members.append(member)
         if not nonliteral_members:
-            return Literal(DECIMAL_ZERO if self.op == 'in' else DECIMAL_ONE, None)
+            return Literal(DECIMAL_ZERO, None)
         return self._replace(members=nonliteral_members)
+
+
+class RangeMembership(namedtuple('RangeMembership', ['operand', 'low', 'high', 'low_inclusive', 'high_inclusive'])):
+
+    __slots__ = ()
+
+    def emit(self, code_generator):
+        false_label = code_generator.allocate_label()
+        after_label = code_generator.allocate_label()
+        self.operand.emit(code_generator)
+        code_generator.emit('Cp')
+        self.low.emit(code_generator)
+        code_generator.emit('Ge' if self.low_inclusive else 'Gt')
+        code_generator.emit('Jz', false_label)
+        self.high.emit(code_generator)
+        code_generator.emit('Gt' if self.high_inclusive else 'Ge')
+        code_generator.emit('Nt')
+        code_generator.emit('Ju', after_label)
+        code_generator.label_next_instruction(false_label)
+        code_generator.emit('Pp')
+        code_generator.emit('Lz')
+        code_generator.label_next_instruction(after_label)
+
+    def rewrite(self, fn):
+        return fn(self._replace(operand=self.operand.rewrite(fn), low=self.low.rewrite(fn), high=self.high.rewrite(fn)))
+
+    def fold_constants(self):
+        if not isinstance(self.operand, Literal):
+            return self
+        operand_value = self.operand.value
+        if isinstance(self.low, Literal):
+            if operand_value > self.low.value or (self.low_inclusive and operand_value == self.low.value):
+                return BinOp(self.operand, '<=' if self.high_inclusive else '<', self.high)
+            else:
+                return Literal(DECIMAL_ZERO, None)
+        if isinstance(self.high, Literal):
+            if operand_value < self.high.value or (self.high_inclusive and operand_value == self.high.value):
+                return BinOp(self.operand, '>=' if self.low_inclusive else '>', self.low)
+            else:
+                return Literal(DECIMAL_ZERO, None)
+        return self
 
 
 class FunctionCall(namedtuple('FunctionCall', ['function', 'params'])):
@@ -564,6 +587,7 @@ class Parser(object):
             '?', ':',
             ',',
             '(', ')',
+            '[', ']',
             '{', '}',
         ))),
         ('comment', '#'),
@@ -688,10 +712,10 @@ class Parser(object):
         yield Token('end-of-input', None, self.line_number, 0)
 
     # Check that the current token matches the specified type. Does not consume the token or otherwise modify the parser state.
-    def _check(self, expected_type):
-        if self.token.type != expected_type:
+    def _check(self, *expected_types):
+        if self.token.type not in expected_types:
             raise CompilationError(
-                'expected {0}, but found {1} instead'.format(expected_type, self.token.type),
+                'expected {0} but found {1} instead'.format(' or '.join(expected_types), self.token.type),
                 line_number=self.token.line_number,
                 char_number=self.token.char_number
             )
@@ -801,12 +825,37 @@ class Parser(object):
             self._advance()
             no = self._parse_expression()
             return TerOp(left, yes, no)
-        elif t.type == 'in':
-            return SetMembership(left, 'in', self._parse_set())
-        elif t.type == 'not':
-            self._check('in')
-            self._advance()
-            return SetMembership(left, 'not in', self._parse_set())
+        elif t.type in ('in', 'not'):
+            if t.type == 'in':
+                negate = False
+            else:
+                self._check('in')
+                self._advance()
+                negate = True
+            self._check('{', '[', '(')
+            if self.token.type == '{':
+                members = []
+                self._advance()
+                while True:
+                    members.append(self._parse_expression())
+                    if self.token.type == '}':
+                        break
+                    self._check(',')
+                    self._advance()
+                self._advance()
+                membership = SetMembership(left, members)
+            else:
+                range_low_inclusive = self.token.type == '['
+                self._advance()
+                range_low = self._parse_expression()
+                self._check(',')
+                self._advance()
+                range_high = self._parse_expression()
+                self._check(']', ')')
+                range_high_inclusive = self.token.type == ']'
+                self._advance()
+                membership = RangeMembership(left, range_low, range_high, range_low_inclusive, range_high_inclusive)
+            return UnOp('!', membership) if negate else membership
         elif t.type in ('||', '&&'):
             right = self._parse_expression(self.LBP[t.type])
             predicates = (left.predicates if isinstance(left, LogicalOp) and left.op == t.type else [left]) + \
@@ -818,20 +867,6 @@ class Parser(object):
             return BinOp(left, t.type, self._parse_expression(self.LBP[t.type] - 1))
         else:
             t.unexpected() # pragma: nocover
-
-    # Parse a "set" that looks like { expr1, expr2, ... }. Sets are only allowed after the "in" operator.
-    def _parse_set(self):
-        members = []
-        self._check('{')
-        self._advance()
-        while True:
-            members.append(self._parse_expression())
-            if self.token.type == '}':
-                break
-            self._check(',')
-            self._advance()
-        self._advance()
-        return members
 
     # The expression subparser is implemented using a top-down operator precedence parser,
     # aka a Pratt parser. The nud and led functions are implemented on the parser itself,

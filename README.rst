@@ -177,25 +177,51 @@ any non-zero value is considered true.
 Expressions
 ~~~~~~~~~~~
 
-Programs can evaluate expressions containing the following operators
-(in descending order of precedence):
+Programs can evaluate expressions containing the following operators:
 
-======================  ======================================================================
-operator                meaning
-======================  ======================================================================
-`( exp )`               grouping; e.g. `(x + 1) * y`
-`!`, `+`, `-`           logical NOT, unary plus, unary minus
-`^`                     exponentiation (right associative)
-`*`, `/`                multiplication, division
-`+`, `-`                addition, subtraction
-`in { members }`
-`not in { members }`    set membership; e.g. `x not in {1, 4, 9, 16}`
-`<`, `<=`, `>`, `>=`    comparison
-`==`, `!=`              equality, inequality
-`&&`                    logical AND
-`||`                    logical OR
-`exp ? exp : exp`       if-then-else; e.g. `x < 0 ? -x : x`
-======================  ======================================================================
+=======================  ===========  ==============================================  ========================
+operator                 precedence   meaning                                         example
+=======================  ===========  ==============================================  ========================
+`( exp )`                0 (highest)  grouping                                        `(x + 1) * y`
+`!`                      1            logical NOT                                     `!x`
+`+`                      1            unary plus (has no effect)                      `+x`
+`-`                      1            unary minus                                     `-x`
+`^`                      2            exponentiation (right associative)              `x ^ 3`
+`*`                      3            multiplication                                  `x * 100`
+`/`                      3            division                                        `x / 2`
+`+`                      4            addition                                        `x + 5`
+`-`                      4            subtraction                                     `x - 3`
+`in { exp, ... }`        5            is a member of the set                          `x in {0, y, -z}`
+`not in { exp, ... }`    5            is not a member of the set                      `x not in {0, y, -z}`
+`in [ low , high ]`      5            falls within the interval (see Intervals)       `x in [-3, 7]`
+`not in [ low , high ]`  5            does not fall within the interval               `x not in [-3, 7]`
+`<`                      6            is less than                                    `x < y`
+`<=`                     6            is less than or equal to                        `x <= y`
+`>`                      6            is greater than                                 `x > y`
+`>=`                     6            is greater than or equal to                     `x >= y`
+`==`                     7            is equal to                                     `x == y`
+`!=`                     7            is not equal to                                 `x != y`
+`&&`                     8            logical AND (short-circuiting)                  `x && (y / x > 0.8)`
+`||`                     9            logical OR (short-circuiting)                   `x > 3 || y > 7`
+`exp ? exp : exp`        10 (lowest)  if-then-else                                    `x < 0 ? -x : x`
+=======================  ===========  ==============================================  ========================
+
+Intervals
+~~~~~~~~~
+
+Intervals support inclusive endpoints (specified with square brackets)
+and exclusive endpoints (specified with parentheses), and the two can be
+freely mixed. For example, the follwing are all valid checks:
+
+* `x in (0, 1)`
+* `x in (0, 1]`
+* `x in [0, 1)`
+* `x in [0, 1]`
+
+Note that "backwards" intervals (where the first endpoint is greater
+than the second) are considered pathological and treated as empty.
+Therefore `2 in (1, 3)` evaluates to `1` (aka true), but `2 in (3, 1)`
+evaluates to `0` (aka false).
 
 Functions
 ~~~~~~~~~

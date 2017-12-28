@@ -409,11 +409,11 @@ let DOUBLE_PI = PI * 2
             ]
         )
 
-    def test_compile_in(self):
+    def test_compile_in_set(self):
         self.assert_compiles_to(
             '''\
 @start:
-    result = x in { PI, y }''',
+    result = x in {PI, y}''',
             'result|x|y',
             '3.14159',
             [
@@ -425,12 +425,37 @@ let DOUBLE_PI = PI * 2
         self.assert_compiles_to(
             '''\
 @start:
-    result = x not in { PI, y }''',
+    result = x not in {PI, y}''',
             'result|x|y',
             '3.14159',
             [
                 ('Lv1', 2), ('Cp', 2), ('Lc0', 2), ('Eq', 2), ('Jn12', 2), ('Cp', 2), ('Lv2', 2), ('Eq', 2),
-                ('Jn12', 2), ('Pp', 2), ('Lo', 2), ('Ju14', 2), ('Pp', 2), ('Lz', 2), ('St0', 2), ('Xx', None)
+                ('Jn12', 2), ('Pp', 2), ('Lz', 2), ('Ju14', 2), ('Pp', 2), ('Lo', 2), ('Nt', 2), ('St0', 2), ('Xx', None)
+            ]
+        )
+
+    def test_compile_in_range(self):
+        self.assert_compiles_to(
+            '''\
+@start:
+    result = x in [ PI, y ]''',
+            'result|x|y',
+            '3.14159',
+            [
+                ('Lv1', 2), ('Cp', 2), ('Lc0', 2), ('Ge', 2), ('Jz9', 2), ('Lv2', 2), ('Gt', 2),
+                ('Nt', 2), ('Ju11', 2), ('Pp', 2), ('Lz', 2), ('St0', 2), ('Xx', None)
+            ]
+        )
+
+        self.assert_compiles_to(
+            '''\
+@start:
+    result = x not in [ PI, y ]''',
+            'result|x|y',
+            '3.14159',
+            [
+                ('Lv1', 2), ('Cp', 2), ('Lc0', 2), ('Ge', 2), ('Jz9', 2), ('Lv2', 2), ('Gt', 2),
+                ('Nt', 2), ('Ju11', 2), ('Pp', 2), ('Lz', 2), ('Nt', 2), ('St0', 2), ('Xx', None)
             ]
         )
 
@@ -537,6 +562,10 @@ let DOUBLE_PI = PI * 2
     x = 5 ? 3 : 4
     y = 5 in {1, a, 3, b}
     z = 5 not in {1, a, 5, b}
+    za = 3 in [0, a]
+    zb = -5 in (a, 9)
+    zc = 1 in (1, a)
+    zd = 1 in (a, 1)
     0 => @deadcode
     1 => @alwaysexecuted
 
@@ -544,14 +573,14 @@ let DOUBLE_PI = PI * 2
 
 @alwaysexecuted:
 ''',
-            ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'],
+            ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'za', 'zb', 'zc', 'zd'], # pylint: disable=line-too-long
             {}
         )
         self.assertEqual(
             program.dsmal,
-            'a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z;'
-            '5|-5|6|-2|1.5|3|4|9;'
-            'LzSt0LoSt1LoSt2LzSt3LzSt4LoSt5Lc0St6LoSt7Lc2St8Lc4St9Lc7St10LzSt11LoSt12Lc0St13Lc1St14Lc0St15Lc1St16Lc0St17Lc0St18Lc3St19Lc0St20Lc2St21Lc6St22Lc5St23Lc0CpLv0EqJn60CpLv1EqJn60PpLzJu62PpLoSt24LzSt25Xx' # pylint: disable=line-too-long
+            'a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|za|zb|zc|zd;'
+            '5|-5|3|6|-2|1.5|4|9;'
+            'LzSt0LoSt1LoSt2LzSt3LzSt4LoSt5Lc0St6LoSt7Lc3St8Lc5St9Lc7St10LzSt11LoSt12Lc0St13Lc1St14Lc0St15Lc1St16Lc0St17Lc0St18Lc4St19Lc0St20Lc3St21Lc6St22Lc2St23Lc0CpLv0EqJn60CpLv1EqJn60PpLzJu62PpLoSt24LzSt25Lv0Lc2GeSt26Lc1Lv0GtSt27LzSt28LzSt29Xx' # pylint: disable=line-too-long
         )
 
     def test_compile_eliminate_constant_declared_variables(self):
@@ -676,37 +705,37 @@ let t3 = t2 + a
         source_code = '''\
 @start
 '''
-        with self.assert_raises_compilation_error('expected :, but found end-of-line instead', line_number=1, char_number=6):
+        with self.assert_raises_compilation_error('expected : but found end-of-line instead', line_number=1, char_number=6):
             abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
 
         source_code = '''\
 let
 '''
-        with self.assert_raises_compilation_error('expected identifier, but found end-of-line instead', line_number=1, char_number=3):
+        with self.assert_raises_compilation_error('expected identifier but found end-of-line instead', line_number=1, char_number=3):
             abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
 
         source_code = '''\
 let temp
 '''
-        with self.assert_raises_compilation_error('expected =, but found end-of-line instead', line_number=1, char_number=8):
+        with self.assert_raises_compilation_error('expected = but found end-of-line instead', line_number=1, char_number=8):
             abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
 
         source_code = '''\
 let temp 3
 '''
-        with self.assert_raises_compilation_error('expected =, but found literal instead', line_number=1, char_number=9):
+        with self.assert_raises_compilation_error('expected = but found literal instead', line_number=1, char_number=9):
             abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
 
         source_code = '''\
 let temp +
 '''
-        with self.assert_raises_compilation_error('expected =, but found + instead', line_number=1, char_number=9):
+        with self.assert_raises_compilation_error('expected = but found + instead', line_number=1, char_number=9):
             abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
 
         source_code = '''\
 let temp, temp2
 '''
-        with self.assert_raises_compilation_error('expected =, but found , instead', line_number=1, char_number=8):
+        with self.assert_raises_compilation_error('expected = but found , instead', line_number=1, char_number=8):
             abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
 
         source_code = '''\
@@ -733,28 +762,28 @@ let temp = 0
 @start:
     => y
 '''
-        with self.assert_raises_compilation_error('expected label, but found identifier instead', line_number=2, char_number=7):
+        with self.assert_raises_compilation_error('expected label but found identifier instead', line_number=2, char_number=7):
             abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
 
         source_code = '''\
 @start:
     price = flavor in 3
 '''
-        with self.assert_raises_compilation_error('expected {, but found literal instead', line_number=2, char_number=22):
+        with self.assert_raises_compilation_error('expected { or [ or ( but found literal instead', line_number=2, char_number=22):
             abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
 
         source_code = '''\
 @start:
     price = flavor not
 '''
-        with self.assert_raises_compilation_error('expected in, but found end-of-line instead', line_number=2, char_number=22):
+        with self.assert_raises_compilation_error('expected in but found end-of-line instead', line_number=2, char_number=22):
             abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
 
         source_code = '''\
 @start:
     price = flavor not in 5
 '''
-        with self.assert_raises_compilation_error('expected {, but found literal instead', line_number=2, char_number=26):
+        with self.assert_raises_compilation_error('expected { or [ or ( but found literal instead', line_number=2, char_number=26):
             abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
 
         source_code = '''\
@@ -797,6 +826,34 @@ let temp = 0
     price = flavor in {3,}
 '''
         with self.assert_raises_compilation_error('unexpected }', line_number=2, char_number=25):
+            abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
+
+        source_code = '''\
+@start:
+    price = scoops in []
+'''
+        with self.assert_raises_compilation_error('unexpected ]', line_number=2, char_number=23):
+            abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
+
+        source_code = '''\
+@start:
+    price = scoops in [1]
+'''
+        with self.assert_raises_compilation_error('expected , but found ] instead', line_number=2, char_number=24):
+            abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
+
+        source_code = '''\
+@start:
+    price = scoops in [1, ]
+'''
+        with self.assert_raises_compilation_error('unexpected ]', line_number=2, char_number=26):
+            abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
+
+        source_code = '''\
+@start:
+    price = scoops in [1, 2, 3]
+'''
+        with self.assert_raises_compilation_error('expected ] or ) but found , instead', line_number=2, char_number=27):
             abysmal.compile(source_code, ICE_CREAM_VARIABLES, ICE_CREAM_CONSTANTS)
 
     def test_parse_unexpected_text_after_line_continuation(self):
@@ -1101,6 +1158,32 @@ let temp = 0
         check('1 in {-1, -1, 2}', 0)
         check('1 not in {-1, -1, 2}', 1)
 
+        check('zero in [0, 0.75]', 1)
+        check('zero in (0, 0.75]', 0)
+        check('0.75 in [0, 0.75]', 1)
+        check('0.75 in [0, 0.75)', 0)
+        check('0.5 in [one, TWO]', 0)
+        check('0.5 in (one, TWO)', 0)
+        check('0.5 in [zero, tenth]', 0)
+        check('0.5 in (zero, tenth)', 0)
+        check('tenth * 10 in [-1, 1]', 1)
+        check('tenth * 10 in (-1, 1)', 0)
+        check('tenth in [0, 1]', 1)
+        check('tenth in (0, 1)', 1)
+
+        check('zero not in [0, 0.75]', 0)
+        check('zero not in (0, 0.75]', 1)
+        check('0.75 not in [0, 0.75]', 0)
+        check('0.75 not in [0, 0.75)', 1)
+        check('0.5 not in [one, TWO]', 1)
+        check('0.5 not in (one, TWO)', 1)
+        check('0.5 not in [zero, tenth]', 1)
+        check('0.5 not in (zero, tenth)', 1)
+        check('tenth * 10 not in [-1, 1]', 0)
+        check('tenth * 10 not in (-1, 1)', 1)
+        check('tenth not in [0, 1]', 0)
+        check('tenth not in (0, 1)', 0)
+
         check('1 + 1 == 2 ? 1 : 0', 1)
         check('TWO + TWO == 3 ? 1 : 0', 0)
         check('one + TWO == 2 ? 1 : 0', 0)
@@ -1200,8 +1283,12 @@ let temp = 0
     result = x ^ 2
     result = MIN(x, y, PI)
     result = MAX(x, y, PI)
-    result = x in { y, 0 }
-    result = y not in { x, 1 }
+    result = x in {y, 0}
+    result = y not in {x, 1}
+    result = x in (0, y)
+    result = x not in (0, y)
+    result = x in [half, y]
+    result = x not in [half, y]
     x == y => @b
     x != y => @c
 @b:

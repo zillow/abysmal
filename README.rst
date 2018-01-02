@@ -10,7 +10,7 @@ Abysmal
 .. image:: https://codecov.io/gh/zillow/abysmal/branch/master/graph/badge.svg
         :target: https://codecov.io/gh/zillow/abysmal
 
-Abysmal stands for "appallingly simple yet somehow mostly adequate language".
+Abysmal stands for "appallingly basic yet somehow mostly adequate language".
 
 Abysmal is a programming language designed to allow non-programmers
 to implement simple business logic for computing prices, rankings, or
@@ -133,6 +133,9 @@ on its own line, and is one of the following:
 When execution reaches a state, that state's actions are executed in order.
 If execution reaches the end of a state without jumping to a new state, the
 program exits.
+
+Programs are not allowed to contain loops or any other exeuction cycles.
+Any program containing a cycle will fail to compile.
 
 Actions are typically indented to make the state labels easier to see, but
 this is just a stylistic convention and is not enforced by the language.
@@ -320,7 +323,7 @@ and names and values of any constants you want to define:
 Ignore the second value returned by `abysmal.compile()` for now (refer to the
 Measuring Coverage section to see what it's useful for).
 
-Next, need to make a virtual machine for the compiled program to run on:
+Next, we need to make a virtual machine for the compiled program to run on:
 
 .. code-block:: python
 

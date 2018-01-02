@@ -12,11 +12,28 @@ from os.path import basename, dirname, join, relpath, splitext
 from setuptools import Extension, find_packages, setup
 
 
-if not sys.version_info >= (3, 5):
-    raise Exception('*** abysmal only supports Python 3.5 and above ***')
+if not sys.version_info >= (3, 3):
+    raise Exception('*** abysmal only supports Python 3.3 and above ***')
 
 
-ENABLE_C_ASSERT = False
+extra_compile_args = ['-O3'] # setuptools specifies -O2 -- override it
+extra_link_args = ['-O3']    # setuptools specifies -O1 -- override it
+
+if os.environ.get('ABYSMAL_STRICT'):
+    extra_compile_args += [
+        '-ansi',
+        '-Wall',
+        '-Wextra',
+        '-Werror',
+        '-Wconversion',
+        '-Wpedantic',
+        '-std=c99',
+        '-Wno-missing-field-initializers',
+    ]
+if os.environ.get('ABYSMAL_TRACE'):
+    extra_compile_args += [
+        '-DABYSMAL_TRACE'
+    ]
 
 
 def read(*names, **kwargs):
@@ -26,10 +43,9 @@ def read(*names, **kwargs):
     ) as file_:
         return file_.read()
 
-
 setup(
     name='abysmal',
-    version='1.1.0',
+    version='1.1.1',
 
     license='MIT license',
     url='https://github.com/zillow/abysmal',
@@ -47,6 +63,8 @@ setup(
         'Operating System :: POSIX :: Linux',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.3',
+        'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: Implementation :: CPython',
@@ -57,7 +75,7 @@ setup(
 
     keywords=['absymal', 'programming', 'language'],
 
-    python_requires='>= 3.5',
+    python_requires='>= 3.3',
 
     packages=find_packages('src'),
     package_dir={'': 'src'},
@@ -70,9 +88,9 @@ setup(
             sources=[path],
             include_dirs=[dirname(path)],
             libraries=['mpdec'],
-            undef_macros=['NDEBUG'] if ENABLE_C_ASSERT else [],
-            extra_compile_args=['-O3'], # setuptools specifies -O2 -- override it
-            extra_link_args=['-O3'],    # setuptools specifies -O1 -- override it
+            undef_macros=['NDEBUG'] if os.environ.get('ABYSMAL_DEBUG') else [],
+            extra_compile_args=extra_compile_args,
+            extra_link_args=extra_link_args
         )
         for root, _, _ in os.walk('src')
         for path in glob(join(root, '*.c'))

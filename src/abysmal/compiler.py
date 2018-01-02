@@ -572,7 +572,7 @@ class Parser(object):
 
     DECIMAL_TOKEN_SUFFIX_SHIFT_AMOUNTS = {'%': -2, 'k': 3, 'm': 6, 'b': 9}
     DECIMAL_TOKEN_PATTERN = r'(?P<decimal_whole>[0-9]+)(?P<decimal_fraction>\.[0-9]+)?(?P<decimal_suffix>[%kKmMbB])?'
-    DECIMAL_TOKEN_REGEX = re.compile(DECIMAL_TOKEN_PATTERN)
+    DECIMAL_TOKEN_REGEX = re.compile('^' + DECIMAL_TOKEN_PATTERN + '$')
 
     # Note: the order of this list matters!
     TOKENIZER_PATTERNS = (
@@ -654,7 +654,7 @@ class Parser(object):
 
     @staticmethod
     def parse_number(s):
-        m = Parser.DECIMAL_TOKEN_REGEX.fullmatch(s)
+        m = Parser.DECIMAL_TOKEN_REGEX.match(s)
         return Parser._number_from_match(m) if m else None
 
     @property

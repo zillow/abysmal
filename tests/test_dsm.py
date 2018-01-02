@@ -18,6 +18,16 @@ class Test_dsm_Program(unittest.TestCase):
                 dsm.Program(program)
             self.assertEqual(str(raised.exception), 'program must have variables, constants, and instructions sections')
 
+    def test_program_no_instructions(self):
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';;')
+        self.assertEqual(str(raised.exception), 'program must contain at least one instruction')
+
+    def test_too_many_variables(self):
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program('|'.join('v{0}'.format(i) for i in range(0, 2 ** 16)) + ';;Xx')
+        self.assertEqual(str(raised.exception), 'too many variables')
+
     def test_invalid_variable_name(self):
         with self.assertRaises(dsm.InvalidProgramError) as raised:
             dsm.Program('|bar;;Xx')
@@ -27,6 +37,11 @@ class Test_dsm_Program(unittest.TestCase):
         with self.assertRaises(dsm.InvalidProgramError) as raised:
             dsm.Program('foo|foo;;Xx')
         self.assertEqual(str(raised.exception), 'duplicate variable name "foo"')
+
+    def test_too_many_constants(self):
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';' + '|'.join('0.{0}'.format(i) for i in range(0, 2 ** 16)) + ';Xx')
+        self.assertEqual(str(raised.exception), 'too many constants')
 
     def test_invalid_constant_slot(self):
         with self.assertRaises(dsm.InvalidProgramError) as raised:
@@ -63,6 +78,11 @@ class Test_dsm_Program(unittest.TestCase):
 
     def test_constants(self):
         self.assertEqual(dsm.Program(';0|-0|1|-1|0.3|3.13159|-100000000.0000000001;Xx').machine().run(), 1)
+
+    def test_too_many_instructions(self):
+        with self.assertRaises(dsm.InvalidProgramError) as raised:
+            dsm.Program(';;' + 'Xx' * (2 ** 16))
+        self.assertEqual(str(raised.exception), 'too many instructions')
 
     def test_minimal_program(self):
         self.assertEqual(dsm.Program(';;Xx').machine().run(), 1)
@@ -718,6 +738,7 @@ class Test_dsm_Program(unittest.TestCase):
     def test_pickle(self):
         program1 = dsm.Program('radius|area|diameter;3.14|2;Lv0Lv0MlLc0MlSt1Lv0Lc1MlLc0MlSt2Xx')
         for protocol in (2, 3, 4):
-            p = pickle.dumps(program1, protocol=protocol)
-            program2 = pickle.loads(p)
-            self.assertEqual(program1.dsmal, program2.dsmal)
+            if protocol <= pickle.HIGHEST_PROTOCOL:
+                p = pickle.dumps(program1, protocol=protocol)
+                program2 = pickle.loads(p)
+                self.assertEqual(program1.dsmal, program2.dsmal)

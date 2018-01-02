@@ -24,7 +24,7 @@ content without involving your developers or breaking anything.
 Features
 --------
 
-* Supports Python 3.5 and above
+* Supports Python 3.3 and above
 
 
 Dependencies

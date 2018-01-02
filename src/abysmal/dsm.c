@@ -148,7 +148,6 @@
 #define STACK_SIZE 32U
 #define ARENA_SIZE 256U
 #define DEFAULT_INSTRUCTION_LIMIT 10000
-#define TRACE_EXECUTION 0
 
 
 /********** Global variables **********/
@@ -367,13 +366,13 @@ typedef struct tag_DSMProgram {
 
     PyObject* dsmal;
 
-    size_t variableCount;
+    uint16_t variableCount;
     PyObject* variableNameToSlotDict;
 
-    size_t constantCount;
-    DSMValue* constants;
+    uint16_t constantCount;
+    DSMValue* constants; // NULL if constantCount == 0
 
-    size_t instructionCount;
+    uint16_t instructionCount; // >= 1
     DSMInstruction* instructions;
 } DSMProgram;
 DECLARE_PYTYPEOBJECT_EX(DSMProgram, Program);
@@ -444,7 +443,7 @@ static Py_ssize_t DSMMachine_len(DSMMachine* machine);
 static PyObject* DSMMachine_run_(DSMMachine* machine, int coverage);
 static PyObject* DSMMachine_run(DSMMachine* machine, PyObject* dummy_args);
 static PyObject* DSMMachine_runWithCoverage(DSMMachine* machine, PyObject* dummy_args);
-#if TRACE_EXECUTION
+#ifdef ABYSMAL_TRACE
 static void DSMMachine_dump(DSMMachine* machine);
 #endif
 
@@ -584,6 +583,7 @@ static int DSMProgram_parseVariableNames(DSMProgram* program, PyObject* sectionS
         CHECK(variableNamesList);
 
         Py_ssize_t allegedCount = PyList_Size(variableNamesList);
+        CHECK_WITH_MESSAGE(allegedCount <= UINT16_MAX, PyExc_InvalidProgramError, "too many variables");
 
         for (count = 0; count < allegedCount; count += 1) {
             PyObject* variableNameStr = PyList_GetItem(variableNamesList, count);
@@ -608,7 +608,7 @@ static int DSMProgram_parseVariableNames(DSMProgram* program, PyObject* sectionS
     success = 1;
 
 cleanup:
-    program->variableCount = (size_t)count;
+    program->variableCount = (uint16_t)count;
     Py_XDECREF(variableNamesList);
     return success;
 }
@@ -633,7 +633,9 @@ static int DSMProgram_parseConstants(DSMProgram* program, PyObject* sectionStr) 
 
         // Allocate constants storage.
         Py_ssize_t allegedCount = PyList_Size(constantsList);
-        CHECK_ALLOCATION(program->constants = (DSMValue*)PyMem_Calloc(allegedCount, sizeof(DSMValue)));
+        CHECK_WITH_MESSAGE(allegedCount <= UINT16_MAX, PyExc_InvalidProgramError, "too many constants");
+        CHECK_ALLOCATION(program->constants = (DSMValue*)PyMem_Malloc((uint16_t)allegedCount * sizeof(DSMValue)));
+        memset(program->constants, 0, (uint16_t)allegedCount * sizeof(DSMValue));
 
         // Parse constant values.
         for (count = 0; count < allegedCount; count += 1) {
@@ -643,7 +645,7 @@ static int DSMProgram_parseConstants(DSMProgram* program, PyObject* sectionStr) 
             CHECK_WITH_MESSAGE(length, PyExc_InvalidProgramError, "invalid constant value \"\"");
             const char* constantChars = PyUnicode_AsUTF8(constantStr);
             CHECK(constantChars);
-            DSMValue_init(&program->constants[count]); // PyMem_Calloc() guarantees constants are zero-initialized
+            DSMValue_init(&program->constants[count]); // constants memory is zero-initialized
             program->constants[count].marked = 1; // constant lifetimes are controlled by the program lifetime
             CHECK(DSMValue_setFromString(&program->constants[count], constantChars, "constant", &ctx, PyExc_InvalidProgramError));
             program->constants[count].str = constantStr; Py_INCREF(constantStr);
@@ -654,7 +656,7 @@ static int DSMProgram_parseConstants(DSMProgram* program, PyObject* sectionStr) 
 
 cleanup:
     Py_XDECREF(constantsList);
-    program->constantCount = (size_t)count;
+    program->constantCount = (uint16_t)count;
     return success;
 }
 
@@ -668,6 +670,9 @@ static int DSMProgram_parseInstructions(DSMProgram* program, PyObject* sectionSt
     Py_ssize_t inputLength = 0;
     const char* input = PyUnicode_AsUTF8AndSize(sectionStr, &inputLength);
     CHECK(input);
+    CHECK_WITH_MESSAGE(
+        inputLength,
+        PyExc_InvalidProgramError, "program must contain at least one instruction");
 
     Py_ssize_t i;
 
@@ -679,10 +684,12 @@ static int DSMProgram_parseInstructions(DSMProgram* program, PyObject* sectionSt
             allegedCount += 1;
         }
     }
+    CHECK_WITH_MESSAGE(allegedCount <= UINT16_MAX, PyExc_InvalidProgramError, "too many instructions");
 
     // Allocate space for instructions.
     if (allegedCount) {
-        CHECK_ALLOCATION(program->instructions = (DSMInstruction*)PyMem_Calloc(allegedCount, sizeof(DSMInstruction)));
+        CHECK_ALLOCATION(program->instructions = (DSMInstruction*)PyMem_Malloc((uint16_t)allegedCount * sizeof(DSMInstruction)));
+        memset(program->instructions, 0, (uint16_t)allegedCount * sizeof(DSMInstruction));
     }
 
     // Parse instructions.
@@ -742,8 +749,8 @@ static int DSMProgram_parseInstructions(DSMProgram* program, PyObject* sectionSt
             for (; i < inputLength; i += 1) {
                 char c = input[i];
                 if (c >= '0' && c <= '9') {
-                    param = (param * 10) + (c - '0');
-                    CHECK_WITH_MESSAGE(param <= 0xFFFF, PyExc_InvalidProgramError, "instruction parameter is too large");
+                    param = (param * 10) + (uint32_t)(c - '0');
+                    CHECK_WITH_MESSAGE(param <= UINT16_MAX, PyExc_InvalidProgramError, "instruction parameter is too large");
                 } else {
                     break;
                 }
@@ -764,7 +771,7 @@ static int DSMProgram_parseInstructions(DSMProgram* program, PyObject* sectionSt
     success = 1;
 
 cleanup:
-    program->instructionCount = (size_t)count;
+    program->instructionCount = (uint16_t)count;
     return success;
 }
 
@@ -780,8 +787,8 @@ static PyObject* DSMProgram_createMachine(DSMProgram* program, PyObject* args, P
     }
 
     // variables: [ current0, current1, ..., currentN, baseline0, baseline1, ..., baselineN ]
-    size_t variableCount = program->variableCount;
-    DSMMachine* machine = (DSMMachine*)DSMMachineType.tp_alloc(&DSMMachineType, (Py_ssize_t)((variableCount * 2) - 1));
+    uint16_t variableCount = program->variableCount;
+    DSMMachine* machine = (DSMMachine*)DSMMachineType.tp_alloc(&DSMMachineType, (((Py_ssize_t)variableCount * 2) - 1));
     if (!machine) {
         return NULL;
     }
@@ -858,7 +865,7 @@ static DSMValue* DSMMachine_allocateArenaValue(DSMMachine* machine) {
     if (!machine->nextFreeArenaValue) {
         size_t i;
 
-#if TRACE_EXECUTION
+#ifdef ABYSMAL_TRACE
         printf("GARBAGE COLLECTION\n\n");
         DSMMachine_dump(machine);
 #endif
@@ -1034,7 +1041,7 @@ static inline DSMValue* DSMMachine_peekStack(DSMMachine* machine) {
 
 static PyObject* DSMMachine_run_(DSMMachine* machine, int coverage) {
     size_t instructionLimit = (size_t)machine->instructionLimit;
-    size_t instructionCount = machine->program->instructionCount;
+    uint16_t instructionCount = machine->program->instructionCount;
 
     PyObject* result = NULL;
     PyObject* randomNumberIterator = NULL; // lazily initialized
@@ -1047,8 +1054,9 @@ static PyObject* DSMMachine_run_(DSMMachine* machine, int coverage) {
     const DSMInstruction* instruction = NULL;
 
     unsigned char* coverageStats = NULL;
-    if (coverage && instructionCount) {
-        CHECK_ALLOCATION(coverageStats = (unsigned char*)PyMem_Calloc(instructionCount, sizeof(unsigned char)));
+    if (coverage) {
+        CHECK_ALLOCATION(coverageStats = (unsigned char*)PyMem_Malloc(instructionCount));
+        memset(coverageStats, 0, instructionCount);
     }
 
     assert(machine->stackUsed == 0);
@@ -1086,7 +1094,7 @@ execute:
     instructionsExecuted += 1;
     instruction = &machine->program->instructions[pc];
 
-#if TRACE_EXECUTION
+#ifdef ABYSMAL_TRACE
     DSMMachine_dump(machine);
     if (OPCODE_INFO[instruction->opcode].hasParam) {
         printf("\nPC = %zu, OPCODE = %s%u\n\n", pc, OPCODE_INFO[instruction->opcode].name, (unsigned int)instruction->param);
@@ -1297,7 +1305,7 @@ exit_successfully:
             PyTuple_SET_ITEM(result, (Py_ssize_t)i, covered);
         }
     } else {
-        result = PyLong_FromLongLong(instructionsExecuted);
+        result = PyLong_FromLongLong((long long int)instructionsExecuted);
     }
 
 cleanup:
@@ -1329,7 +1337,7 @@ cleanup:
     if (coverageStats) {
         PyMem_Free(coverageStats);
     }
-#if TRACE_EXECUTION
+#ifdef ABYSMAL_TRACE
     printf("HALT\n\n");
     DSMMachine_dump(machine);
 #endif
@@ -1347,7 +1355,7 @@ static PyObject* DSMMachine_runWithCoverage(DSMMachine* machine, PyObject* dummy
     return DSMMachine_run_(machine, 1/*coverage*/);
 }
 
-#if TRACE_EXECUTION
+#ifdef ABYSMAL_TRACE
 static void DSMMachine_dump(DSMMachine* machine) {
     size_t i;
     printf("STACK =\n");

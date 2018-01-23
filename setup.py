@@ -11,13 +11,20 @@ from os.path import basename, dirname, join, relpath, splitext
 
 from setuptools import Extension, find_packages, setup
 
+# Environment variables that control C code compilation:
+#
+# ABYSMAL_STRICT : use strict compiler settings
+# ABYSMAL_ASSERT : enable asserts
+# ABYSMAL_COVER  : include gcov coverage instrumenation (and disable optimizations)
+# ABYMSAL_TRACE  : print verbose tracing to stdout
+# ABYSMAL_TRACE_INTERACTIVE : require <enter> keypress after each trace message
 
 if not sys.version_info >= (3, 3):
     raise Exception('*** abysmal only supports Python 3.3 and above ***')
 
 
-extra_compile_args = ['-O3'] # setuptools specifies -O2 -- override it
-extra_link_args = ['-O3']    # setuptools specifies -O1 -- override it
+extra_compile_args = []
+extra_link_args = []
 
 if os.environ.get('ABYSMAL_STRICT'):
     extra_compile_args += [
@@ -34,6 +41,23 @@ if os.environ.get('ABYSMAL_TRACE'):
     extra_compile_args += [
         '-DABYSMAL_TRACE'
     ]
+if os.environ.get('ABYSMAL_TRACE_INTERACTIVE'):
+    extra_compile_args += [
+        '-DABYSMAL_TRACE_INTERACTIVE'
+    ]
+if os.environ.get('ABYSMAL_COVER'):
+    extra_compile_args += [
+        '-fprofile-arcs',
+        '-ftest-coverage',
+        '-O0',
+    ]
+    extra_link_args += [
+        '-fprofile-arcs',
+        '-O0',
+    ]
+else:
+    extra_compile_args += ['-O3'] # setuptools specifies -O2 -- override it
+    extra_link_args += ['-O3']    # setuptools specifies -O1 -- override it
 
 
 def read(*names, **kwargs):
@@ -88,7 +112,7 @@ setup(
             sources=[path],
             include_dirs=[dirname(path)],
             libraries=['mpdec'],
-            undef_macros=['NDEBUG'] if os.environ.get('ABYSMAL_DEBUG') else [],
+            undef_macros=['NDEBUG'] if os.environ.get('ABYSMAL_ASSERT') else [],
             extra_compile_args=extra_compile_args,
             extra_link_args=extra_link_args
         )

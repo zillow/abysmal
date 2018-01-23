@@ -6,5 +6,5 @@ if [ -z "$TRAVIS" ]; then
 fi
 
 sudo apt-get -qq update
-sudo apt-get install -y python3-dev libmpdec-dev
+sudo apt-get install -y python3-dev libmpdec-dev gcov
 pip install coverage

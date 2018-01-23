@@ -155,7 +155,7 @@ into multiple, shorter lines. Note that comments can appear after a `\\`.
 Numbers
 ~~~~~~~
 
-Abysmal supports integers and fixed-point decimal numbers like `123`,
+Abysmal supports integer and fixed-point decimal literals like `123`,
 `3.14159`, etc. In addition, numbers can have the following suffixes:
 
 ==========  ======================================================
@@ -356,7 +356,9 @@ Finally, we can run the machine and examine final variable values:
     else:
         print('Two scoops of chocolate ice cream in a waffle cone with sprinkles costs: ${0}'.format(price))
 
-Note that the virtual machine treats variable values as strings.
+Note that the virtual machine exposes variable values as strings, which
+may be formatted in scientific or fixed-point notation.
+
 Variables can be set from int, float, bool, Decimal, and string values
 but are converted to strings when assigned. When examining variables
 after running a machine, you need to convert to the values back to
@@ -382,6 +384,21 @@ The values you return are not required to fall within any particular
 range, but [0, 1] is recommended, for consistency with the default behavior.
 
 
+Limits
+~~~~~~
+
+Decimal values are constrained in accordance with the IEEE 754 `decimal128`
+format. This provides 34 digits of precision and an exponent range of
+-6143 to +6144.
+
+Infinity, negative infinity, and NaN (not-a-number) are not allowed.
+Calculations that would give rise to one of these will instead trigger
+an error.
+
+In addition, a calculation can result in overflow or underflow if its
+result is too large or too small to fit into the `decimal128` range.
+
+
 Errors
 ------
 
@@ -391,7 +408,8 @@ Errors
     raised by `machine.run()` and `machine.run_with_coverage()`
     if a program encounters an error while running; this includes conditions
     such as: division by zero, invalid exponentiation, stack overflow,
-    out-of-space, and failure to generate a random number
+    floating-point overflow, floating-point underflow, out-of-space, and
+    failure to generate a random number
 `abysmal.InstructionLimitExceededError`
     raised by `machine.run()` and `machine.run_with_coverage()`
     if a program exceeds its allowed instruction count and is aborted;
@@ -403,10 +421,15 @@ Performance Tips
 
 Abysmal programs run very quickly once compiled, and the virtual machine is
 optimized to make repeated runs with different inputs as cheap as possible.
+
+As always, decide on your performance goals and measure before optimizing.
+
 To get the best performance, follow these tips:
 
 Avoid recompilation
 ~~~~~~~~~~~~~~~~~~~
+
+Compiling a program is orders of magnitude slower than actually running it.
 
 Save the compiled program and reuse it rather than recompiling every time.
 Compiled programs are pickleable, so they are easy to cache.
@@ -432,6 +455,21 @@ For example:
             machine.reset(zip=zip_code).run()
             shipping_costs[zip_code] = round(Decimal(machine['shippingCost']), 2)
         return shipping_costs
+
+Set multiple variables at once
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Override baseline variable values by passing keywords to `machine.reset()`
+rather than assigning variables one-by-one. The overhead of making multiple
+Python function calls is non-trivial if your scenario needs performance!
+
+Only read and write variables you need
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Initializing variables before a program runs and reading variables afterwards
+can easily add up to more time it takes to actually run a typical program.
+If performance is critical for your scenario, you can save time by only
+examining variables whose values you really need.
 
 Limit instruction execution
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~

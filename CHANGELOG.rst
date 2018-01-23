@@ -20,3 +20,12 @@ Changelog
 * Added stricter validation checks when loading compiled program.
 * Addressed warnings generated when compiling with strict compiler settings.
 * Added support for Python 3.3 and 3.4.
+
+1.2.0 (2018-01-23)
+------------------
+
+* Bug fixes for overflow/underflow conditions.
+* Limit decimals according to IEEE 754 `decimal128` format.
+* Major optimizations for computations involving integer values.
+* Support for C coverage reports using gcov.
+* Improved trace output for debugging.

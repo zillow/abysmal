@@ -170,6 +170,10 @@ class Test_dsm_Program(unittest.TestCase):
             dsm.Program('a|b|c;;Lv123Xx')
         self.assertEqual(str(raised.exception), 'reference to nonexistent variable slot 123')
 
+        with self.assertRaises(KeyError) as raised:
+            dsm.Program('a|b|c;;Xx').machine()['d'] = 42
+        self.assertEqual(str(raised.exception), "'d'")
+
     def test_insufficient_operands(self):
         for instruction in ['Jn', 'St', 'Cp', 'Pp', 'Nt', 'Ng', 'Ab', 'Cl', 'Fl', 'Rd']:
             with self.assertRaises(dsm.ExecutionError) as raised:
@@ -221,6 +225,9 @@ class Test_dsm_Program(unittest.TestCase):
 
         for key in ['bogus', 0, object()]:
             with self.assertRaises(KeyError) as raised:
+                _ = program.machine()[key]
+            self.assertEqual(str(raised.exception), repr(key))
+            with self.assertRaises(KeyError) as raised:
                 program.machine()[key] = 42
             self.assertEqual(str(raised.exception), repr(key))
 
@@ -228,22 +235,113 @@ class Test_dsm_Program(unittest.TestCase):
         machine = dsm.Program(';;Xx').machine()
         self.assertEqual(len(machine), 0)
 
-        machine = dsm.Program('foo|bar|baz|wow;;Xx').machine()
+        machine = dsm.Program('foo|bar;;Xx').machine()
         self.assertEqual(machine['foo'], '0')
         self.assertEqual(machine['bar'], '0')
-        self.assertEqual(machine['baz'], '0')
-        self.assertEqual(machine['wow'], '0')
-        self.assertEqual(len(machine), 4)
+        self.assertEqual(len(machine), 2)
 
-        machine['foo'] = 42
-        machine['bar'] = '3.14159'
-        machine['baz'] = Decimal('-10000000.00000001')
-        machine['wow'] = 2 << 65 # overflows an int64_t
+        machine['foo'] = False
+        machine['bar'] = True
+        self.assertEqual(machine['foo'], '0')
+        self.assertEqual(machine['bar'], '1')
 
-        self.assertEqual(machine['foo'], '42')
-        self.assertEqual(machine['bar'], '3.14159')
-        self.assertEqual(machine['baz'], '-10000000.00000001')
-        self.assertIn(machine['wow'], ['73786976294838206464', '7.37869762948382065e+19'])
+        for value in range(-100, 100):
+            machine['foo'] = value
+            self.assertEqual(machine['foo'], str(value))
+
+        for value in [0, '.0', '-0.0', '0.000']:
+            machine['foo'] = value
+            self.assertEqual(machine['foo'], '0')
+
+        for value in [-42, -42.0, '-42.000', '-4.20e+1', '-.4200e+2']:
+            machine['foo'] = value
+            self.assertEqual(machine['foo'], '-42')
+
+        for value in ['3.14159', '3.141590', '3.1415900', '.314159e+1', '.0314159e+2']:
+            machine['foo'] = value
+            self.assertEqual(machine['foo'], '3.14159')
+
+        machine['foo'] = '123e+13'
+        self.assertEqual(machine['foo'], '1.23e+15')
+
+        machine['foo'] = Decimal('-10000000.00000001')
+        self.assertEqual(machine['foo'], '-10000000.00000001')
+
+        machine['foo'] = 2 << 65 # overflows an int64_t
+        self.assertIn(machine['foo'], ['73786976294838206464'])
+
+    def test_value_roundtrip(self):
+        cases = [
+            (False, '0'),
+            (True, '1'),
+            (0, '0'),
+            (0.0, '0'),
+            ('0', '0'),
+            ('0.', '0'),
+            ('0.0', '0'),
+            ('-0.0', '0'),
+            ('0.000', '0'),
+            (1, '1'),
+            (1.0, '1'),
+            ('1', '1'),
+            ('1.0', '1'),
+            ('1.', '1'),
+            ('-1.0', '-1'),
+            ('-1.000', '-1'),
+            ('0e+0', '0'),
+            ('0e-0', '0'),
+            ('0e+5', '0'),
+            ('0e-5', '0'),
+            ('1e+0', '1'),
+            ('1e-0', '1'),
+            ('1e+5', '100000'),
+            ('1e-5', '0.00001'),
+            (123, '123'),
+            (-123, '-123'),
+            ('123.45e-5', '0.0012345'),
+            ('123.45e-4', '0.012345'),
+            ('123.45e-3', '0.12345'),
+            ('123.45e-2', '1.2345'),
+            ('123.45e-1', '12.345'),
+            ('123.45e+0', '123.45'),
+            ('123.45e+1', '1234.5'),
+            ('123.45e+2', '12345'),
+            ('123.45e+3', '123450'),
+            ('123.45e+4', '1234500'),
+            ('63e9', '6.3E+10'),
+            ('1.001002003000000', '1.001002003'),
+            ('0.000001e7', '10'),
+            ('0.0000010e7', '10'),
+            ('0.00000100e7', '10'),
+            ('0.000001000e7', '10'),
+            (2147483647, '2147483647'),
+            (2147483648, '2147483648'),
+            (2147483649, '2147483649'),
+            (2147483650, '2147483650'),
+            (-2147483647, '-2147483647'),
+            (-2147483648, '-2147483648'),
+            (-2147483649, '-2147483649'),
+            (-2147483650, '-2147483650'),
+            (18446744073709551616, '18446744073709551616'),
+            (18446744073709551617, '18446744073709551617'),
+            (-18446744073709551617, '-18446744073709551617'),
+            (1234567890123456789012345678901234567890, '1.234567890123456789012345678901235E+39'),
+            (1000000000000000000000000000000000, '1E+33'),
+        ]
+        machine = dsm.Program('value;;Lv0LoAdLoSbSt0Xx').machine()
+        for idx, (machine['value'], expected_value) in enumerate(cases, 1):
+            self.assertEqual(
+                Decimal(machine['value']),
+                Decimal(expected_value),
+                'case {0} (write/read): {1} != {2}'.format(idx, machine['value'], expected_value)
+            )
+        for idx, (machine['value'], expected_value) in enumerate(cases, 1):
+            machine.run()
+            self.assertEqual(
+                Decimal(machine['value']),
+                Decimal(expected_value),
+                'case {0} (write/modify/read): {1} != {2}'.format(idx, machine['value'], expected_value)
+            )
 
     def test_Xx(self):
         self.assertEqual(dsm.Program(';;Xx').machine().run(), 1)
@@ -333,6 +431,15 @@ class Test_dsm_Program(unittest.TestCase):
             machine.run()
         self.assertEqual(str(raised.exception), 'random_number_iterator ran out of values')
 
+        def bad_iterator():
+            yield 1
+            raise Exception('boom!')
+
+        with self.assertRaises(Exception) as raised:
+            machine.random_number_iterator = bad_iterator()
+            machine.run()
+        self.assertEqual(str(raised.exception), 'boom!')
+
     def test_Lz(self):
         machine = dsm.Program('a;;LzSt0Xx').machine()
         self.assertEqual(machine.run(), 3)
@@ -359,19 +466,16 @@ class Test_dsm_Program(unittest.TestCase):
         self.assertEqual(machine['a'], '1')
 
     def run_unop_instruction(self, instruction, cases):
-        machine = dsm.Program('operand|result;;Lv0' + instruction + 'St1Xx').machine()
-        for machine['operand'], expected_result in cases:
+        machine = dsm.Program('a|result;;Lv0' + instruction + 'St1Xx').machine()
+        for machine['a'], expected_result in cases:
             self.assertEqual(machine.run(), 4)
             self.assertEqual(Decimal(machine['result']), Decimal(expected_result))
 
     def run_binop_instruction(self, instruction, cases):
-        machine = dsm.Program('operand1|operand2|result;;Lv0Lv1' + instruction + 'St2Xx').machine()
-        for machine['operand1'], machine['operand2'], expected_result in cases:
+        machine = dsm.Program('a|b|result;;Lv0Lv1' + instruction + 'St2Xx').machine()
+        for machine['a'], machine['b'], expected_result in cases:
             self.assertEqual(machine.run(), 5)
-            if isinstance(expected_result, (list, tuple)):
-                self.assertIn(Decimal(machine['result']), [Decimal(x) for x in expected_result])
-            else:
-                self.assertEqual(Decimal(machine['result']), Decimal(expected_result))
+            self.assertEqual(Decimal(machine['result']), Decimal(expected_result))
 
     def test_Nt(self):
         self.run_unop_instruction('Nt', [
@@ -383,61 +487,99 @@ class Test_dsm_Program(unittest.TestCase):
             ('1.000000', '0'),
             ('42.001', '0'),
             ('-42.001', '0'),
+            ('2147483647', '0'),
+            ('2147483648', '0'),
+            ('2147483649', '0'),
+            ('-2147483647', '0'),
+            ('-2147483648', '0'),
+            ('-2147483649', '0'),
         ])
 
     def test_Ng(self):
         self.run_unop_instruction('Ng', [
             ('0', '0'),
-            ('0.000000', '0.000000'),
-            ('-0.0', '0.0'),
+            ('0.000000', '0'),
+            ('-0.0', '0'),
             ('1', '-1'),
-            ('1.000000', '-1.000000'),
+            ('1.000000', '-1'),
             ('42.001', '-42.001'),
             ('-42.001', '42.001'),
+            ('2147483647', '-2147483647'),
+            ('2147483648', '-2147483648'),
+            ('2147483649', '-2147483649'),
+            ('-2147483647', '2147483647'),
+            ('-2147483648', '2147483648'),
+            ('-2147483649', '2147483649'),
         ])
 
     def test_Ab(self):
         self.run_unop_instruction('Ab', [
             ('0', '0'),
-            ('0.000000', '0.000000'),
-            ('-0.0', '0.0'),
+            ('0.000000', '0'),
+            ('-0.0', '0'),
             ('1', '1'),
-            ('1.000000', '1.000000'),
+            ('1.000000', '1'),
             ('42.001', '42.001'),
             ('-42.001', '42.001'),
+            ('2147483647', '2147483647'),
+            ('2147483648', '2147483648'),
+            ('2147483649', '2147483649'),
+            ('-2147483647', '2147483647'),
+            ('-2147483648', '2147483648'),
+            ('-2147483649', '2147483649'),
         ])
 
     def test_Cl(self):
         self.run_unop_instruction('Cl', [
             ('0', '0'),
             ('0.000000', '0'),
-            ('-0.0', '-0'),
+            ('-0.0', '0'),
             ('1', '1'),
             ('1.000000', '1'),
             ('42.001', '43'),
             ('-42.001', '-42'),
+            ('2147483647', '2147483647'),
+            ('2147483648', '2147483648'),
+            ('2147483649', '2147483649'),
+            ('-2147483647', '-2147483647'),
+            ('-2147483648', '-2147483648'),
+            ('-2147483649', '-2147483649'),
         ])
 
     def test_Fl(self):
         self.run_unop_instruction('Fl', [
             ('0', '0'),
             ('0.000000', '0'),
-            ('-0.0', '-0'),
+            ('-0.0', '0'),
             ('1', '1'),
             ('1.000000', '1'),
             ('42.001', '42'),
             ('-42.001', '-43'),
+            ('2147483647', '2147483647'),
+            ('2147483648', '2147483648'),
+            ('2147483649', '2147483649'),
+            ('-2147483647', '-2147483647'),
+            ('-2147483648', '-2147483648'),
+            ('-2147483649', '-2147483649'),
         ])
 
     def test_Rd(self):
         self.run_unop_instruction('Rd', [
             ('0', '0'),
             ('0.000000', '0'),
-            ('-0.0', '-0'),
+            ('-0.0', '0'),
             ('1', '1'),
             ('1.000000', '1'),
             ('42.001', '42'),
+            ('42.9', '43'),
             ('-42.001', '-42'),
+            ('-42.9', '-43'),
+            ('2147483647', '2147483647'),
+            ('2147483648', '2147483648'),
+            ('2147483649', '2147483649'),
+            ('-2147483647', '-2147483647'),
+            ('-2147483648', '-2147483648'),
+            ('-2147483649', '-2147483649'),
         ])
 
     def test_Eq(self):
@@ -449,6 +591,8 @@ class Test_dsm_Program(unittest.TestCase):
             ('1.000000', '1', '1'),
             ('42.001', '42', '0'),
             ('-42.001', '-42', '0'),
+            ('1e+500', '1e+400', '0'),
+            ('1e+500', '1e+500', '1'),
         ])
 
     def test_Ne(self):
@@ -460,6 +604,8 @@ class Test_dsm_Program(unittest.TestCase):
             ('1.000000', '1', '0'),
             ('42.001', '42', '1'),
             ('-42.001', '-42', '1'),
+            ('1e+500', '1e+400', '1'),
+            ('1e+500', '1e+500', '0'),
         ])
 
     def test_Gt(self):
@@ -471,6 +617,8 @@ class Test_dsm_Program(unittest.TestCase):
             ('1.000000', '1', '0'),
             ('42.001', '42', '1'),
             ('-42.001', '-42', '0'),
+            ('1e+500', '1e+400', '1'),
+            ('1e+500', '1e+500', '0'),
         ])
 
     def test_Ge(self):
@@ -482,40 +630,72 @@ class Test_dsm_Program(unittest.TestCase):
             ('1.000000', '1', '1'),
             ('42.001', '42', '1'),
             ('-42.001', '-42', '0'),
+            ('1e+500', '1e+400', '1'),
+            ('1e+500', '1e+500', '1'),
         ])
 
     def test_Ad(self):
         self.run_binop_instruction('Ad', [
             ('0', '0', '0'),
-            ('0.000000', '0', '0.000000'),
-            ('-0.0', '0', '0.0'),
+            ('42', '0', '42'),
+            ('0', '42', '42'),
+            ('0.000000', '0', '0'),
+            ('-0.0', '0', '0'),
             ('1', '1', '2'),
-            ('1.000000', '1', '2.000000'),
+            ('1.000000', '1', '2'),
             ('42.001', '42', '84.001'),
             ('-42.001', '-42', '-84.001'),
         ])
 
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';9999999999999999999999999999999999e+6111|1e+6111;Lc0Lc1AdXx').machine().run()
+        self.assertEqual(str(raised.exception), 'result of Ad at instruction 2 was too large')
+        self.assertEqual(raised.exception.instruction, 2)
+        self.assertEqual(raised.exception.opcode, 'Ad')
+
     def test_Sb(self):
         self.run_binop_instruction('Sb', [
             ('0', '0', '0'),
-            ('0.000000', '0', '0.000000'),
-            ('-0.0', '0', '-0.0'),
+            ('0.000000', '0', '0'),
+            ('-0.0', '0', '0'),
             ('1', '1', '0'),
-            ('1.000000', '1', '0.000000'),
+            ('42', '9', '33'),
+            ('42', '0', '42'),
+            ('1.000000', '1', '0'),
             ('42.001', '42', '0.001'),
             ('-42.001', '-42', '-0.001'),
+            ('3.14', '0.0', '3.14'),
+            ('42', '42', '0'),
+            ('0', '42', '-42'),
+            ('0', '-3.14', '3.14'),
         ])
+
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';9999999999999999999999999999999999e+6111|-1e+6111;Lc0Lc1SbXx').machine().run()
+        self.assertEqual(str(raised.exception), 'result of Sb at instruction 2 was too large')
+        self.assertEqual(raised.exception.instruction, 2)
+        self.assertEqual(raised.exception.opcode, 'Sb')
 
     def test_Ml(self):
         self.run_binop_instruction('Ml', [
             ('0', '0', '0'),
-            ('0.000000', '0', '0.000000'),
-            ('-0.0', '0', '-0.0'),
+            ('1.5', '0', '0'),
+            ('0', '1.5', '0'),
+            ('1.5', '1', '1.5'),
+            ('1', '2.5', '2.5'),
+            ('0.000000', '0', '0'),
+            ('-0.0', '0', '0'),
             ('1', '1', '1'),
-            ('1.000000', '1', '1.000000'),
+            ('1.000000', '1', '1'),
             ('42.001', '42', '1764.042'),
             ('-42.001', '-42', '1764.042'),
         ])
+
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';1e+6144|10;Lc0Lc1MlXx').machine().run()
+        self.assertEqual(str(raised.exception), 'result of Ml at instruction 2 was too large')
+        self.assertEqual(raised.exception.instruction, 2)
+        self.assertEqual(raised.exception.opcode, 'Ml')
 
     def test_Dv(self):
         with self.assertRaises(dsm.ExecutionError) as raised:
@@ -543,23 +723,62 @@ class Test_dsm_Program(unittest.TestCase):
         self.assertEqual(raised.exception.opcode, 'Dv')
 
         self.run_binop_instruction('Dv', [
-            ('5', '5', '1'),
-            ('1.000000', '1', '1.000000'),
-            ('42.001', '42', ['1.0000238095238095238095238095238095238', '1.00002380952380952']),
-            ('-42.001', '-42', ['1.0000238095238095238095238095238095238', '1.00002380952380952']),
+            ('0', '1', '0'),
+            ('0', '0.3', '0'),
+            ('0.00', '100', '0'),
+            ('0.9', '0.1', '9'),
+            ('2', '1', '2'),
+            ('-3', '1', '-3'),
+            ('5', '5.0', '1'),
+            ('20', '4', '5'),
+            ('1.000000', '1', '1'),
+            ('42.001', '42', '1.00002380952380952380952380952381'),
+            ('-42.001', '-42', '1.00002380952380952380952380952381'),
         ])
 
-    def test_Pw(self):
         with self.assertRaises(dsm.ExecutionError) as raised:
-            dsm.Program(';0;Lc0CpPwXx').machine().run()
-        self.assertEqual(str(raised.exception), 'illegal Pw at instruction 2')
+            dsm.Program(';1e+6144|0.1;Lc0Lc1DvXx').machine().run()
+        self.assertEqual(str(raised.exception), 'result of Dv at instruction 2 was too large')
+        self.assertEqual(raised.exception.instruction, 2)
+        self.assertEqual(raised.exception.opcode, 'Dv')
+
+    def test_Pw(self):
+        for a, b in [
+                ('-1', '-0.5'),
+                ('0', '-1'),
+                ('0', '-2'),
+        ]:
+            with self.assertRaises(dsm.ExecutionError) as raised:
+                dsm.Program(';{0}|{1};Lc0Lc1PwXx'.format(a, b)).machine().run()
+            self.assertEqual(str(raised.exception), 'illegal Pw at instruction 2')
+            self.assertEqual(raised.exception.instruction, 2)
+            self.assertEqual(raised.exception.opcode, 'Pw')
+
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';2e+256;Lc0CpPwXx').machine().run()
+        self.assertEqual(str(raised.exception), 'result of Pw at instruction 2 was too large')
+        self.assertEqual(raised.exception.instruction, 2)
+        self.assertEqual(raised.exception.opcode, 'Pw')
+
+        with self.assertRaises(dsm.ExecutionError) as raised:
+            dsm.Program(';2e-256|2e+256;Lc0Lc1PwXx').machine().run()
+        self.assertEqual(str(raised.exception), 'result of Pw at instruction 2 was too small')
         self.assertEqual(raised.exception.instruction, 2)
         self.assertEqual(raised.exception.opcode, 'Pw')
 
         self.run_binop_instruction('Pw', [
-            #('1', '1', '1'),
-            #('1.000000', '1', '1.000000'),
-            #('2', '3', '8'),
+            ('0', '0', '0'),
+            ('-0.0', '-0.00', '0'),
+            ('0', '1', '0'),
+            ('3.14', '1', '3.14'),
+            ('-3.14', '1', '-3.14'),
+            ('1', '1', '1'),
+            ('1', '2', '1'),
+            ('1', '3.14', '1'),
+            ('3', '2', '9'),
+            ('2.5', '2', '6.25'),
+            ('1.000000', '1', '1'),
+            ('2', '3', '8'),
             ('9', '0.5', '3'),
         ])
 
@@ -631,6 +850,9 @@ class Test_dsm_Program(unittest.TestCase):
             {'x': 1, 'y': 0},
             {'x': 0, 'y': 1},
             {'x': 1, 'y': 1},
+            {'x': 3.14, 'y': 0},
+            {'x': 0, 'y': 3.14},
+            {'x': 3.14, 'y': 3.14},
         ]
 
         # Make sure all opcodes are present in the program.
@@ -657,9 +879,9 @@ class Test_dsm_Program(unittest.TestCase):
 
         coverage_check()
 
-        # Run the cases a bunch of times and make sure no memory leaks.
+        # Run the cases a bunch of times.
 
-        def leak_check():
+        def stress():
             reusable_machine = dsm.Program(dsmal).machine()
             for _ in range(10000):
                 for case in cases:
@@ -721,7 +943,7 @@ class Test_dsm_Program(unittest.TestCase):
                         one_time_machine['two'],
                     )
 
-        leak_check()
+        stress()
 
     def test_coverage(self):
         machine = dsm.Program('a|b|multiply|c;;Lv0Lv1Lv2Jn6AdJu7MlSt3Xx').machine(a=3, b=5, multiply=0)

@@ -8,4 +8,4 @@ fi
 python3 -m unittest -v tests/test_*.py
 python3 -E -m coverage run --branch --source 'abysmal' -m unittest tests/test_*.py
 python3 -E -m coverage xml
-python3 -E -m coverage report
+gcov -b -o `find . -wholename './build/*/src/abysmal'` src/abysmal/*.c

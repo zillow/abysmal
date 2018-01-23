@@ -29,6 +29,7 @@ wheels/
 .coverage
 coverage.xml
 *.cover
+*.gcov
 
 # virtualenv
 venv/

@@ -101,33 +101,16 @@
  * Variable values are converted to strings when set.
  */
 
+
+/********** Python **********/
+
 #include "Python.h"
 #include "structmember.h"
 
-#define MODULE_NAME dsm
+#define DECLARE_PYTYPEOBJECT(ct, pyt) static PyTypeObject ct##Type = { PyVarObject_HEAD_INIT(NULL, 0) "abysmal.dsm." #pyt, }
 
-#define CONCAT_(a, b) a##b
-#define CONCAT(a, b) CONCAT_(a, b)
 
-#define STRINGIFY_(x) #x
-#define STRINGIFY(x) STRINGIFY_(x)
-
-#define MODULE_INIT_ERROR NULL
-
-#define DEFINE_EXCEPTION(name, base) \
-    do { \
-        if (!(PyExc_##name = PyErr_NewException(STRINGIFY(MODULE_NAME) "." #name, PyExc_##base, NULL))) return MODULE_INIT_ERROR; \
-        Py_INCREF(PyExc_##name); \
-        PyModule_AddObject(PyModule_dsm, #name, PyExc_##name); \
-    } while (0)
-
-#define DECLARE_PYTYPEOBJECT_EX(ct, pyt) \
-    static PyTypeObject ct##Type = { \
-        PyVarObject_HEAD_INIT(NULL, 0) \
-        "abysmal." STRINGIFY(MODULE_NAME) "." #pyt, \
-    }
-
-#define DECLARE_PYTYPEOBJECT(t) DECLARE_PYTYPEOBJECT_EX(t, t)
+/********** libmpdec **********/
 
 #include "mpdecimal.h"
 
@@ -142,8 +125,12 @@
 #error "libmpdec version 2.4.0 or higher is required"
 #endif
 
+#define MPD_Errors_and_overflows (MPD_Errors | MPD_Overflow | MPD_Underflow)
 
-/********** Configuration **********/
+#define mpd_dsmcontext(ctx) mpd_ieee_context((ctx), 128)
+
+
+/********** DSM constants **********/
 
 #define STACK_SIZE 32U
 #define ARENA_SIZE 256U
@@ -238,6 +225,7 @@ static const OpcodeInfo OPCODE_INFO[29] = {
 
 #define CHECK(x)                                       do { if (!(x)) { goto cleanup; } } while (0)
 #define CHECK_ALLOCATION(x)                            do { if (!(x)) { PyErr_NoMemory(); goto cleanup; } } while (0)
+#define CHECK_WITH_OBJECT(x, exc, obj)                 do { if (!(x)) { PyErr_SetObject(exc, obj); goto cleanup; } } while (0)
 #define CHECK_WITH_MESSAGE(x, exc, msg)                do { if (!(x)) { PyErr_SetString(exc, msg); goto cleanup; } } while (0)
 #define CHECK_WITH_FORMATTED_MESSAGE(x, exc, fmt, ...) do { if (!(x)) { PyErr_Format(exc, fmt, __VA_ARGS__); goto cleanup; } } while (0)
 
@@ -248,31 +236,47 @@ typedef struct tag_DSMValue {
     mpd_t mpd;                      // mpd_t stored in-place
     mpd_uint_t mpdDefaultBuffer[4]; // default static mpd data buffer
     PyObject* str;                  // lazily-created PyUnicode representation
-    int marked;                     // used during GC mark-and-sweep
+    unsigned char marked;           // used during GC mark-and-sweep
+    unsigned char i32Valid;
+    unsigned char mpdValid;
+    int32_t i32;
 } DSMValue;
 
 #define MPD(v) (&(v)->mpd)
 #define MPD_DEFAULT_BUFFER_SIZE 4
 
-#define INTERN_POS_DIGIT(digit) \
-static DSMValue _pos_##digit##_value = { { MPD_STATIC | MPD_CONST_DATA,           0, 1, 1, MPD_DEFAULT_BUFFER_SIZE, _pos_##digit##_value.mpdDefaultBuffer }, { digit, 0, 0, 0 }, NULL, 1 }; \
+#define DSMValue_IS_ZERO(v) ((v)->i32Valid ? !(v)->i32 : mpd_iszero(MPD(v)))
+#define DSMValid_IS_NEGATIVE(v) ((v)->i32Valid ? ((v)->i32 < 0) : mpd_isnegative(MPD(v)))
+#define DSMValue_IS_OBVIOUSLY_ONE(v) ((v)->i32Valid ? ((v)->i32 == 1) : (MPD(v)->len == 1 && MPD(v)->exp == 0 && MPD(v)->data[0] == 1 && !mpd_isnegative(MPD(v))))
+#define DSMValue_IS_OBVIOUSLY_TWO(v) ((v)->i32Valid ? ((v)->i32 == 2) : (MPD(v)->len == 1 && MPD(v)->exp == 0 && MPD(v)->data[0] == 2 && !mpd_isnegative(MPD(v))))
+#define DSMValue_ARE_OBVIOUSLY_EQUAL(va, vb) ((va == vb) || (va->i32Valid && vb->i32Valid && va->i32 == vb->i32))
 
-#define INTERN_NEG_DIGIT(digit) \
-static DSMValue _neg_##digit##_value = { { MPD_STATIC | MPD_CONST_DATA | MPD_NEG, 0, 1, 1, MPD_DEFAULT_BUFFER_SIZE, _neg_##digit##_value.mpdDefaultBuffer }, { digit, 0, 0, 0 }, NULL, 1 };
+#define MAX_INTERNED_DIGIT 9
+#define INTERNED_DIGIT(digit) (&INTERNED_DIGITS[9 + (digit)])
+#define DECLARE_POS_INTERNED_DIGIT(digit) { { MPD_STATIC | MPD_CONST_DATA,           0, 1, 1, MPD_DEFAULT_BUFFER_SIZE, (INTERNED_DIGIT(digit))->mpdDefaultBuffer  }, { digit, 0, 0, 0 }, NULL, 1, 1, 1, digit }
+#define DECLARE_NEG_INTERNED_DIGIT(digit) { { MPD_STATIC | MPD_CONST_DATA | MPD_NEG, 0, 1, 1, MPD_DEFAULT_BUFFER_SIZE, (INTERNED_DIGIT(-digit))->mpdDefaultBuffer }, { digit, 0, 0, 0 }, NULL, 1, 1, 1, -digit }
 
-INTERN_POS_DIGIT(0)
-INTERN_POS_DIGIT(1) INTERN_NEG_DIGIT(1)
-INTERN_POS_DIGIT(2) INTERN_NEG_DIGIT(2)
-INTERN_POS_DIGIT(3) INTERN_NEG_DIGIT(3)
-INTERN_POS_DIGIT(4) INTERN_NEG_DIGIT(4)
-INTERN_POS_DIGIT(5) INTERN_NEG_DIGIT(5)
-INTERN_POS_DIGIT(6) INTERN_NEG_DIGIT(6)
-INTERN_POS_DIGIT(7) INTERN_NEG_DIGIT(7)
-INTERN_POS_DIGIT(8) INTERN_NEG_DIGIT(8)
-INTERN_POS_DIGIT(9) INTERN_NEG_DIGIT(9)
-
-#define POS_INTERNED_DIGIT(digit) &_pos_##digit##_value
-#define NEG_INTERNED_DIGIT(digit) &_neg_##digit##_value
+static DSMValue INTERNED_DIGITS[MAX_INTERNED_DIGIT + 1 + MAX_INTERNED_DIGIT] = {
+    DECLARE_NEG_INTERNED_DIGIT(9),
+    DECLARE_NEG_INTERNED_DIGIT(8),
+    DECLARE_NEG_INTERNED_DIGIT(7),
+    DECLARE_NEG_INTERNED_DIGIT(6),
+    DECLARE_NEG_INTERNED_DIGIT(5),
+    DECLARE_NEG_INTERNED_DIGIT(4),
+    DECLARE_NEG_INTERNED_DIGIT(3),
+    DECLARE_NEG_INTERNED_DIGIT(2),
+    DECLARE_NEG_INTERNED_DIGIT(1),
+    DECLARE_POS_INTERNED_DIGIT(0),
+    DECLARE_POS_INTERNED_DIGIT(1),
+    DECLARE_POS_INTERNED_DIGIT(2),
+    DECLARE_POS_INTERNED_DIGIT(3),
+    DECLARE_POS_INTERNED_DIGIT(4),
+    DECLARE_POS_INTERNED_DIGIT(5),
+    DECLARE_POS_INTERNED_DIGIT(6),
+    DECLARE_POS_INTERNED_DIGIT(7),
+    DECLARE_POS_INTERNED_DIGIT(8),
+    DECLARE_POS_INTERNED_DIGIT(9)
+};
 
 // Assumes that the DSMValue is zero-initialized.
 static void DSMValue_init(DSMValue* v) {
@@ -281,6 +285,10 @@ static void DSMValue_init(DSMValue* v) {
     assert(!MPD(v)->len);
     assert(!v->str);
     assert(!v->marked);
+    assert(!v->i32Valid);
+    assert(!v->mpdValid);
+    assert(!v->i32);
+
     MPD(v)->flags = MPD_STATIC | MPD_STATIC_DATA;
     MPD(v)->alloc = MPD_DEFAULT_BUFFER_SIZE;
     MPD(v)->data = v->mpdDefaultBuffer;
@@ -297,50 +305,225 @@ static int DSMValue_setFromString(DSMValue* v, const char* s, const char* friend
     assert(mpd_isstatic(MPD(v)));
     assert(!v->str);
 
-    int success = 0;
     uint32_t mpdStatus = 0;
+    v->i32Valid = 0;
+    v->mpdValid = 0;
+    v->i32 = 0;
+
+    // Set decimal from string (remove trailing zeroes).
     mpd_qset_string(MPD(v), s, ctx, &mpdStatus);
     CHECK_ALLOCATION(!(mpdStatus & MPD_Malloc_error));
+    mpd_qreduce(MPD(v), MPD(v), ctx, &mpdStatus);
     CHECK_WITH_FORMATTED_MESSAGE(
-        !(mpdStatus & MPD_Errors) && !mpd_isspecial(MPD(v)),
+        !(mpdStatus & MPD_Errors_and_overflows) && !mpd_isspecial(MPD(v)),
         exc, "invalid %s value \"%s\"", friendlySource, s);
-    success = 1;
+    v->mpdValid = 1;
+
+    // See if we can store the value as an integer.
+    if (mpd_isinteger(MPD(v))) {
+        mpdStatus = 0;
+        v->i32 = mpd_qget_i32(MPD(v), &mpdStatus);
+        v->i32Valid = !(mpdStatus & MPD_Invalid_operation);
+    }
+
+    return 1;
 
 cleanup:
-    return success;
+    return 0;
 }
 
 static int DSMValue_setFromLongLong(DSMValue* v, PY_LONG_LONG ll, const char* friendlySource, mpd_context_t* ctx, PyObject* exc) {
     assert(mpd_isstatic(MPD(v)));
     assert(!v->str);
 
-    int success = 0;
+    // If possible, store in i32 and don't promote it to decimal.
+    v->mpdValid = 0;
+    v->i32Valid = (ll >= INT32_MIN && ll <= INT32_MAX);
+    if (v->i32Valid) {
+        v->i32Valid = 1;
+        v->i32 = (int32_t)ll;
+        return 1;
+    }
+
+    // If value doesn't fit in i32, promote it to decimal.
     uint32_t mpdStatus = 0;
+    v->i32Valid = 0;
     mpd_qset_i64(MPD(v), ll, ctx, &mpdStatus);
     CHECK_ALLOCATION(!(mpdStatus & MPD_Malloc_error));
     CHECK_WITH_FORMATTED_MESSAGE(
-        !(mpdStatus & MPD_Errors) && !mpd_isspecial(MPD(v)),
+        !(mpdStatus & MPD_Errors_and_overflows),
         exc, "invalid %s value %lld", friendlySource, ll);
-    success = 1;
+    assert(!mpd_isspecial(MPD(v)));
+    v->mpdValid = 1;
+    return 1;
 
 cleanup:
-    return success;
+    return 0;
+}
+
+// Returns either: the specified value (modified in-place) or an interned digit.
+// Assumes that:
+//  * the mpdValue field has been set
+//  * the mpdValue field is not special (NaN, Inf, -Inf)
+//  * the mpdValue field has been finalized (probably implicitly)
+//  * the mpdValue field was finalized using the same context passed to us here
+static DSMValue* DSMValue_simplify(DSMValue* v, mpd_context_t* ctx) {
+    assert(v->mpdValid);
+    if (mpd_iszero(MPD(v))) {
+        return INTERNED_DIGIT(0);
+    }
+
+    // Remove trailing zeroes. Adapted from implementation of mpd_qreduce(),
+    // with unneeded error checks removed.
+    mpd_ssize_t shift = mpd_trail_zeros(MPD(v));
+    mpd_ssize_t maxexp = (ctx->clamp) ? mpd_etop(ctx) : ctx->emax;
+    assert(MPD(v)->exp <= maxexp);
+    mpd_ssize_t maxshift = maxexp - MPD(v)->exp;
+    shift = (shift > maxshift) ? maxshift : shift;
+    mpd_qshiftr_inplace(MPD(v), shift);
+    MPD(v)->exp += shift;
+
+    // Update the i32Valid/i32 fields.
+    if (mpd_isinteger(MPD(v))) {
+        uint32_t mpdStatus = 0;
+        v->i32 = mpd_qget_i32(MPD(v), &mpdStatus);
+        v->i32Valid = !(mpdStatus & MPD_Invalid_operation);
+        if (v->i32Valid && v->i32 >= -MAX_INTERNED_DIGIT && v->i32 <= MAX_INTERNED_DIGIT) {
+            return INTERNED_DIGIT(v->i32);
+        }
+    } else {
+        v->i32Valid = 0;
+    }
+    return v;
 }
 
 static PyObject* DSMValue_asPyUnicode(DSMValue* v) {
     if (!v->str) {
-        char* formatted = NULL;
-        mpd_ssize_t formattedLength = mpd_to_sci_size(&formatted, MPD(v), 0);
-        if (formattedLength < 0) {
-            PyErr_NoMemory();
+        if (DSMValue_IS_ZERO(v)) {
+            v->str = INTERNED_DIGIT(0)->str;
+            Py_INCREF(v->str);
+        } else if (v->i32Valid) {
+            int64_t i64 = v->i32;
+            int negative = i64 < 0;
+            char buffer[11]; // longest possible signed 32-bit int is "-2147483647"
+            size_t bufferLength = sizeof(buffer);
+            char* start = &buffer[bufferLength];
+            if (negative) i64 = -i64;
+            do {
+                int64_t div = i64 / 10;
+                int64_t mod = i64 - (div * 10);
+                start -= 1;
+                *start = (char)((char)mod + '0');
+                i64 = div;
+            } while (i64);
+            if (negative) {
+                start -= 1;
+                *start = '-';
+            }
+            v->str = PyUnicode_FromStringAndSize(start, (Py_ssize_t)(bufferLength - (size_t)(start - buffer)));
         } else {
-            v->str = PyUnicode_FromStringAndSize(formatted, formattedLength);
-            mpd_free(formatted);
+            assert(v->mpdValid);
+            mpd_context_t ctx; mpd_dsmcontext(&ctx);
+            uint32_t mpdStatus = 0;
+            char* formatted = mpd_to_sci(MPD(v), 0);
+            if (!formatted) {
+                if (mpdStatus & MPD_Malloc_error) {
+                    PyErr_NoMemory();
+                } else {
+                    PyErr_SetString(PyExc_ValueError, "could not format decimal value");
+                }
+            } else {
+                v->str = PyUnicode_FromString(formatted);
+                mpd_free(formatted);
+            }
         }
     }
     Py_XINCREF(v->str);
     return v->str;
 }
+
+//static PyObject* DSMValue_asPyUnicode_(DSMValue* v) {
+
+#define WRITE_CHAR(c) \
+    do { \
+        start -= 1; \
+        *start = (char)(c); \
+    } while (0)
+
+#define CHARS_WRITTEN() (bufferLength - (size_t)(start - buffer))
+
+//    if (!v->str) {
+//        if (DSMValue_IS_ZERO(v)) {
+//            // Represent all forms of zero as "0".
+//            v->str = INTERNED_DIGIT(0)->str;
+//            Py_INCREF(v->str);
+//        } else if (v->i32Valid) {
+//            int64_t i64 = v->i32;
+//            int negative = i64 < 0;
+//            char buffer[11]; // longest possible signed 32-bit int is "-2147483647"
+//            size_t bufferLength = sizeof(buffer);
+//            char* start = &buffer[bufferLength];
+//            if (negative) i64 = -i64;
+//            do {
+//                int64_t div = i64 / 10;
+//                int64_t mod = i64 - (div * 10);
+//                WRITE_CHAR(mod + '0');
+//                i64 = div;
+//            } while (i64);
+//            if (negative) WRITE_CHAR('-');
+//            v->str = PyUnicode_FromStringAndSize(start, (Py_ssize_t)CHARS_WRITTEN());
+//        } else {
+//            assert(v->mpdValid);
+//            mpd_ssize_t exp = MPD(v)->exp;
+//            size_t digits = (size_t)MPD(v)->digits;
+//            size_t bufferLength =
+//                1 + /* minus sign */
+//                1 + /* decimal point */
+//                digits +
+//                (size_t)(exp >= 0 ? exp : -exp); /* leading or trailing zeroes */
+//            char* buffer = (char*)PyMem_Malloc(bufferLength);
+//            if (buffer) {
+//                char* start = &buffer[bufferLength];
+//                // Write any trailing integer zeroes stored in the exponent.
+//                for (; exp > 0; exp -= 1) WRITE_CHAR('0');
+//                // Invariant: exp <= 0
+//                mpd_uint_t* nextWord = MPD(v)->data;
+//                size_t coeffDigitsAvailable = 0;
+//                mpd_uint_t coeff = 0;
+//                for (; digits; digits -= 1, coeffDigitsAvailable -= 1) {
+//                    // If we've exhausted the current coefficient word, load the next one.
+//                    if (!coeffDigitsAvailable) {
+//                        assert(!coeff);
+//                        coeff = *nextWord;
+//                        nextWord += 1;
+//                        coeffDigitsAvailable = MPD_RDIGITS;
+//                    }
+//                    mpd_uint_t div = coeff / 10;
+//                    mpd_uint_t mod = coeff - (div * 10);
+//                    if (mod || exp >= 0 || CHARS_WRITTEN()) WRITE_CHAR((char)mod + '0');
+//                    coeff = div;
+//                    exp += 1;
+//                    // If we just wrote the last of > 0 fractional digits, write a decimal point.
+//                    if (!exp && CHARS_WRITTEN()) WRITE_CHAR('.');
+//                }
+//                // Write leading fractional zeroes if necessary.
+//                if (exp < 0) {
+//                    for (; exp < 0; exp += 1) WRITE_CHAR('0');
+//                    WRITE_CHAR('.');
+//                }
+//                // Invariant: exp == 0
+//                // Write leading zero if necessary.
+//                if (*start == '.') WRITE_CHAR('0');
+//                // Write minus sign prefix if necessary.
+//                if (mpd_isnegative(MPD(v))) WRITE_CHAR('-');
+//                v->str = PyUnicode_FromStringAndSize(start, (Py_ssize_t)CHARS_WRITTEN());
+//                PyMem_Free(buffer);
+//            }
+//        }
+//    }
+//    Py_XINCREF(v->str);
+//    return v->str;
+//}
 
 
 /********** DSMArenaValue **********/
@@ -375,7 +558,7 @@ typedef struct tag_DSMProgram {
     uint16_t instructionCount; // >= 1
     DSMInstruction* instructions;
 } DSMProgram;
-DECLARE_PYTYPEOBJECT_EX(DSMProgram, Program);
+DECLARE_PYTYPEOBJECT(DSMProgram, Program);
 
 // Forward declarations.
 static PyObject* DSMProgram_new(PyTypeObject* type, PyObject* args, PyObject* kwargs);
@@ -430,11 +613,11 @@ typedef struct tag_DSMMachine {
     // Slots [variableCount : variableCount * 2 - 1] are the baseline variable values.
     DSMValue* variables[1];
 } DSMMachine;
-DECLARE_PYTYPEOBJECT_EX(DSMMachine, Machine);
+DECLARE_PYTYPEOBJECT(DSMMachine, Machine);
 
 // Forward declarations.
 static void DSMMachine_dealloc(DSMMachine* machine);
-static DSMValue* DSMMachine_allocateArenaValue(DSMMachine* machine);
+static DSMValue* DSMMachine_allocateArenaValue(DSMMachine* machine, DSMValue* gcRoot1, DSMValue* gcRoot2);
 static DSMValue* DSMMachine_createValueFromPythonObject(DSMMachine* machine, PyObject* obj, const char* friendlySource, mpd_context_t* ctx, PyObject* exc);
 static PyObject* DSMMachine_reset(DSMMachine* machine, PyObject* args, PyObject* kwargs);
 static PyObject* DSMMachine_subscript(DSMMachine* machine, PyObject* key);
@@ -443,9 +626,6 @@ static Py_ssize_t DSMMachine_len(DSMMachine* machine);
 static PyObject* DSMMachine_run_(DSMMachine* machine, int coverage);
 static PyObject* DSMMachine_run(DSMMachine* machine, PyObject* dummy_args);
 static PyObject* DSMMachine_runWithCoverage(DSMMachine* machine, PyObject* dummy_args);
-#ifdef ABYSMAL_TRACE
-static void DSMMachine_dump(DSMMachine* machine);
-#endif
 
 static PyMemberDef DSMMachine_members[] = {
     { "program", T_OBJECT, offsetof(DSMMachine, program), READONLY },
@@ -583,7 +763,9 @@ static int DSMProgram_parseVariableNames(DSMProgram* program, PyObject* sectionS
         CHECK(variableNamesList);
 
         Py_ssize_t allegedCount = PyList_Size(variableNamesList);
-        CHECK_WITH_MESSAGE(allegedCount <= UINT16_MAX, PyExc_InvalidProgramError, "too many variables");
+        CHECK_WITH_MESSAGE(
+            allegedCount <= UINT16_MAX,
+            PyExc_InvalidProgramError, "too many variables");
 
         for (count = 0; count < allegedCount; count += 1) {
             PyObject* variableNameStr = PyList_GetItem(variableNamesList, count);
@@ -620,7 +802,7 @@ static int DSMProgram_parseConstants(DSMProgram* program, PyObject* sectionStr) 
     int success = 0;
     Py_ssize_t count = 0;
     PyObject* constantsList = NULL;
-    mpd_context_t ctx; mpd_defaultcontext(&ctx);
+    mpd_context_t ctx; mpd_dsmcontext(&ctx);
 
     CHECK(0 == PyUnicode_READY(sectionStr));
 
@@ -633,8 +815,11 @@ static int DSMProgram_parseConstants(DSMProgram* program, PyObject* sectionStr) 
 
         // Allocate constants storage.
         Py_ssize_t allegedCount = PyList_Size(constantsList);
-        CHECK_WITH_MESSAGE(allegedCount <= UINT16_MAX, PyExc_InvalidProgramError, "too many constants");
-        CHECK_ALLOCATION(program->constants = (DSMValue*)PyMem_Malloc((uint16_t)allegedCount * sizeof(DSMValue)));
+        CHECK_WITH_MESSAGE(
+            allegedCount <= UINT16_MAX,
+            PyExc_InvalidProgramError, "too many constants");
+        program->constants = (DSMValue*)PyMem_Malloc((uint16_t)allegedCount * sizeof(DSMValue));
+        CHECK_ALLOCATION(program->constants);
         memset(program->constants, 0, (uint16_t)allegedCount * sizeof(DSMValue));
 
         // Parse constant values.
@@ -648,7 +833,6 @@ static int DSMProgram_parseConstants(DSMProgram* program, PyObject* sectionStr) 
             DSMValue_init(&program->constants[count]); // constants memory is zero-initialized
             program->constants[count].marked = 1; // constant lifetimes are controlled by the program lifetime
             CHECK(DSMValue_setFromString(&program->constants[count], constantChars, "constant", &ctx, PyExc_InvalidProgramError));
-            program->constants[count].str = constantStr; Py_INCREF(constantStr);
         }
     }
 
@@ -684,11 +868,14 @@ static int DSMProgram_parseInstructions(DSMProgram* program, PyObject* sectionSt
             allegedCount += 1;
         }
     }
-    CHECK_WITH_MESSAGE(allegedCount <= UINT16_MAX, PyExc_InvalidProgramError, "too many instructions");
+    CHECK_WITH_MESSAGE(
+        allegedCount <= UINT16_MAX,
+        PyExc_InvalidProgramError, "too many instructions");
 
     // Allocate space for instructions.
     if (allegedCount) {
-        CHECK_ALLOCATION(program->instructions = (DSMInstruction*)PyMem_Malloc((uint16_t)allegedCount * sizeof(DSMInstruction)));
+        program->instructions = (DSMInstruction*)PyMem_Malloc((uint16_t)allegedCount * sizeof(DSMInstruction));
+        CHECK_ALLOCATION(program->instructions);
         memset(program->instructions, 0, (uint16_t)allegedCount * sizeof(DSMInstruction));
     }
 
@@ -750,7 +937,9 @@ static int DSMProgram_parseInstructions(DSMProgram* program, PyObject* sectionSt
                 char c = input[i];
                 if (c >= '0' && c <= '9') {
                     param = (param * 10) + (uint32_t)(c - '0');
-                    CHECK_WITH_MESSAGE(param <= UINT16_MAX, PyExc_InvalidProgramError, "instruction parameter is too large");
+                    CHECK_WITH_MESSAGE(
+                        param <= UINT16_MAX,
+                        PyExc_InvalidProgramError, "instruction parameter is too large");
                 } else {
                     break;
                 }
@@ -781,17 +970,16 @@ static PyObject* DSMProgram_reduce(DSMProgram* program) {
 }
 
 static PyObject* DSMProgram_createMachine(DSMProgram* program, PyObject* args, PyObject* kwargs) {
-    if (args && PyTuple_GET_SIZE(args)) {
-        PyErr_SetString(PyExc_TypeError, "machine() does not accept positional parameters");
-        return NULL;
-    }
+    DSMMachine* machine = NULL;
+
+    CHECK_WITH_MESSAGE(
+        !args || !PyTuple_GET_SIZE(args),
+        PyExc_TypeError, "machine() does not accept positional parameters");
 
     // variables: [ current0, current1, ..., currentN, baseline0, baseline1, ..., baselineN ]
     uint16_t variableCount = program->variableCount;
-    DSMMachine* machine = (DSMMachine*)DSMMachineType.tp_alloc(&DSMMachineType, (((Py_ssize_t)variableCount * 2) - 1));
-    if (!machine) {
-        return NULL;
-    }
+    machine = (DSMMachine*)DSMMachineType.tp_alloc(&DSMMachineType, (((Py_ssize_t)variableCount * 2) - 1));
+    CHECK(machine);
 
     machine->program = program; Py_INCREF(program);
     machine->instructionLimit = DEFAULT_INSTRUCTION_LIMIT;
@@ -809,7 +997,7 @@ static PyObject* DSMProgram_createMachine(DSMProgram* program, PyObject* args, P
     // all current and baseline variable slots contain valid pointers.
     size_t i;
     for (i = 0; i < variableCount * 2; i += 1) {
-        machine->variables[i] = POS_INTERNED_DIGIT(0);
+        machine->variables[i] = INTERNED_DIGIT(0);
     }
 
     // Override variables with passed-in values.
@@ -818,16 +1006,18 @@ static PyObject* DSMProgram_createMachine(DSMProgram* program, PyObject* args, P
         PyObject* value = NULL;
         Py_ssize_t pos = 0;
         while (PyDict_Next(kwargs, &pos, &key, &value)) {
-            if (0 != DSMMachine_ass_subscript(machine, key, value)) {
-                Py_DECREF(machine);
-                return NULL;
-            }
+            CHECK(!DSMMachine_ass_subscript(machine, key, value));
         }
     }
 
     // Save the current variable values as the baseline.
     memcpy(machine->variables + variableCount, machine->variables, variableCount * sizeof(DSMValue*));
+
     return (PyObject*)machine;
+
+cleanup:
+    Py_XDECREF(machine);
+    return NULL;
 }
 
 
@@ -843,15 +1033,73 @@ static void DSMMachine_dealloc(DSMMachine* machine) {
     Py_TYPE(machine)->tp_free(machine);
 }
 
-static DSMValue* DSMMachine_allocateArenaValue(DSMMachine* machine) {
+#ifdef ABYSMAL_TRACE
+static void DSMValue_println(DSMValue* v) {
+    if (v->i32Valid) {
+        printf("%i | ", v->i32);
+    } else {
+        printf("~ | ");
+    }
+    if (v->mpdValid) {
+        mpd_print(MPD(v));
+    } else {
+        printf("~\n");
+    }
+}
+
+static void DSMMachine_printStack(DSMMachine* machine) {
+    printf("STACK\n");
+    if (!machine->stackUsed) {
+        printf("  empty\n");
+    } else {
+        size_t i;
+        for (i = 0; i < machine->stackUsed; i += 1) {
+            printf("  %zu: ", i); DSMValue_println(machine->stack[i]);
+        }
+    }
+    printf("\n");
+}
+
+static void DSMMachine_printVariables(DSMMachine* machine) {
+    printf("VARIABLES\n");
+    if (!machine->program->variableCount) {
+        printf("  empty\n");
+    } else {
+        size_t i;
+        for (i = 0; i < machine->program->variableCount; i += 1) {
+            printf("  %zu: ", i); DSMValue_println(machine->variables[i]);
+        }
+    }
+    printf("\n");
+}
+
+static void DSMMachine_printBaseline(DSMMachine* machine) {
+    printf("BASELINE\n");
+    if (!machine->program->variableCount) {
+        printf("  empty\n");
+    } else {
+        size_t i;
+        for (i = 0; i < machine->program->variableCount; i += 1) {
+            printf("  %zu: ", i); DSMValue_println(machine->variables[machine->program->variableCount + i]);
+        }
+    }
+    printf("\n");
+}
+
+static void DSMMachine_printProgram(DSMMachine* machine) {
+    printf("%s\n", PyUnicode_AsUTF8(machine->program->dsmal));
+}
+#endif
+
+static DSMValue* DSMMachine_allocateArenaValue(DSMMachine* machine, DSMValue* gcRoot1, DSMValue* gcRoot2) {
     // The first ARENA_SIZE allocations are responsible for initializing the
     // arena slots on demand. The free list is not referenced and remains NULL
     // until all the slots have been allocated the first time.
     if (machine->arenaInitialized < ARENA_SIZE) {
-        DSMArenaValue* hv = &machine->arena[machine->arenaInitialized];
-        DSMValue_init(&hv->value); // DSMProgram_createMachine() guarantees the arena value is zero-initialized
+        DSMArenaValue* av = &machine->arena[machine->arenaInitialized];
+        DSMValue_init(&av->value); // DSMProgram_createMachine() guarantees the arena value is zero-initialized
         machine->arenaInitialized += 1;
-        return &hv->value;
+        return &av->value;
     }
 
     // After all arena slots have been allocated the first time, we have to use
@@ -866,24 +1114,27 @@ static DSMValue* DSMMachine_allocateArenaValue(DSMMachine* machine) {
         size_t i;
 
 #ifdef ABYSMAL_TRACE
-        printf("GARBAGE COLLECTION\n\n");
-        DSMMachine_dump(machine);
+        printf("... collecting garbage ...\n");
+        DSMMachine_printVariables(machine);
+        DSMMachine_printStack(machine);
 #endif
 
         // Mark.
+        if (gcRoot1) gcRoot1->marked = 1;
+        if (gcRoot2) gcRoot2->marked = 1;
         for (i = 0; i < machine->stackUsed; i += 1) machine->stack[i]->marked = 1;
         for (i = 0; i < machine->program->variableCount * 2; i += 1) machine->variables[i]->marked = 1;
 
         // Sweep.
         for (i = 0; i < ARENA_SIZE; i += 1) {
-            DSMArenaValue* hv = &machine->arena[i];
-            if (hv->value.marked) {
+            DSMArenaValue* av = &machine->arena[i];
+            if (av->value.marked) {
                 // Arena slot contains a value currently referenced by the stack and/or variables.
-                hv->value.marked = 0;
+                av->value.marked = 0;
             } else {
                 // Arena slot is no longer in use and can be added to the free list.
-                hv->nextFree = machine->nextFreeArenaValue;
-                machine->nextFreeArenaValue = hv;
+                av->nextFree = machine->nextFreeArenaValue;
+                machine->nextFreeArenaValue = av;
             }
         }
 
@@ -895,42 +1146,23 @@ static DSMValue* DSMMachine_allocateArenaValue(DSMMachine* machine) {
     }
 
     // Pop the head off the free list and sanitize its contents before returning.
-    DSMArenaValue* hv = machine->nextFreeArenaValue;
-    machine->nextFreeArenaValue = hv->nextFree;
-    if (hv->value.str) {
-        Py_DECREF(hv->value.str);
-        hv->value.str = NULL;
+    DSMArenaValue* av = machine->nextFreeArenaValue;
+    machine->nextFreeArenaValue = av->nextFree;
+    if (av->value.str) {
+        Py_DECREF(av->value.str);
+        av->value.str = NULL;
+        av->value.i32Valid = 0;
+        av->value.mpdValid = 0;
+        av->value.i32 = 0;
     }
-    return &hv->value;
+    return &av->value;
 }
 
 static DSMValue* DSMMachine_createValueFromPythonObject(DSMMachine* machine, PyObject* obj, const char* friendlySource, mpd_context_t* ctx, PyObject* exc) {
 
-    static DSMValue* const INTERNED_DIGITS[] = {
-        NEG_INTERNED_DIGIT(9),
-        NEG_INTERNED_DIGIT(8),
-        NEG_INTERNED_DIGIT(7),
-        NEG_INTERNED_DIGIT(6),
-        NEG_INTERNED_DIGIT(5),
-        NEG_INTERNED_DIGIT(4),
-        NEG_INTERNED_DIGIT(3),
-        NEG_INTERNED_DIGIT(2),
-        NEG_INTERNED_DIGIT(1),
-        POS_INTERNED_DIGIT(0),
-        POS_INTERNED_DIGIT(1),
-        POS_INTERNED_DIGIT(2),
-        POS_INTERNED_DIGIT(3),
-        POS_INTERNED_DIGIT(4),
-        POS_INTERNED_DIGIT(5),
-        POS_INTERNED_DIGIT(6),
-        POS_INTERNED_DIGIT(7),
-        POS_INTERNED_DIGIT(8),
-        POS_INTERNED_DIGIT(9)
-    };
-
     // Handle True and False specially.
-    if (obj == Py_False) return POS_INTERNED_DIGIT(0);
-    if (obj == Py_True) return POS_INTERNED_DIGIT(1);
+    if (obj == Py_False) return INTERNED_DIGIT(0);
+    if (obj == Py_True) return INTERNED_DIGIT(1);
 
     // Try parsing the value as a long.
     if (PyLong_Check(obj)) {
@@ -939,32 +1171,33 @@ static DSMValue* DSMMachine_createValueFromPythonObject(DSMMachine* machine, PyO
         if (!overflow) {
             if (ll == -1LL && PyErr_Occurred()) {
                 PyErr_Clear(); // fall through, try parsing from string representation
-            } else if (ll >= -9 && ll <= 9) {
-                return INTERNED_DIGITS[ll + 9];
+            } else if (ll >= -MAX_INTERNED_DIGIT && ll <= MAX_INTERNED_DIGIT) {
+                return INTERNED_DIGIT(ll);
             } else {
-                DSMValue* v = DSMMachine_allocateArenaValue(machine);
-                if (!v || !DSMValue_setFromLongLong(v, ll, friendlySource, ctx, exc)) return NULL;
+                DSMValue* v = DSMMachine_allocateArenaValue(machine, NULL, NULL); CHECK(v);
+                CHECK(DSMValue_setFromLongLong(v, ll, friendlySource, ctx, exc));
                 return v;
             }
         }
     }
 
     // Parse the value from its string representation.
-    DSMValue* v = DSMMachine_allocateArenaValue(machine);
-    if (!v) return NULL;
-    PyObject* str = PyObject_Str(obj);
-    if (!str) return NULL;
+    DSMValue* v = DSMMachine_allocateArenaValue(machine, NULL, NULL); CHECK(v);
+    PyObject* str = PyObject_Str(obj); CHECK(str);
     const char* buffer = PyUnicode_AsUTF8(str);
     int success = !!buffer && DSMValue_setFromString(v, buffer, friendlySource, ctx, exc);
     Py_DECREF(str);
-    return success ? v : NULL;
+    CHECK(success);
+    return v;
+
+cleanup:
+    return NULL;
 }
 
 static PyObject* DSMMachine_reset(DSMMachine* machine, PyObject* args, PyObject* kwargs) {
-    if (args && PyTuple_GET_SIZE(args)) {
-        PyErr_SetString(PyExc_TypeError, "reset() does not accept positional parameters");
-        return NULL;
-    }
+    CHECK_WITH_MESSAGE(
+        !args || !PyTuple_GET_SIZE(args),
+        PyExc_TypeError, "reset() does not accept positional parameters");
 
     // Reset variables to baseline.
     memcpy(machine->variables, machine->variables + machine->program->variableCount, machine->program->variableCount * sizeof(DSMValue*));
@@ -975,53 +1208,50 @@ static PyObject* DSMMachine_reset(DSMMachine* machine, PyObject* args, PyObject*
         PyObject* value = NULL;
         Py_ssize_t pos = 0;
         while (PyDict_Next(kwargs, &pos, &key, &value)) {
-            if (0 != DSMMachine_ass_subscript(machine, key, value)) {
-                return NULL;
-            }
+            CHECK(!DSMMachine_ass_subscript(machine, key, value));
         }
     }
 
     Py_INCREF(machine);
     return (PyObject*)machine;
+
+cleanup:
+    return NULL;
 }
 
 static PyObject* DSMMachine_subscript(DSMMachine* machine, PyObject* key) {
     PyObject* slotNumber = PyDict_GetItem(machine->program->variableNameToSlotDict, key);
-    if (!slotNumber) {
-        PyErr_SetObject(PyExc_KeyError, key);
-        return NULL;
-    }
+    CHECK_WITH_OBJECT(slotNumber, PyExc_KeyError, key);
 
     size_t idx = PyLong_AsSize_t(slotNumber);
-    if (idx >= machine->program->variableCount) {
-        PyErr_SetString(PyExc_IndexError, "index is out of range");
-        return NULL;
-    }
+    CHECK_WITH_MESSAGE(
+        idx < machine->program->variableCount,
+        PyExc_IndexError, "index is out of range");
 
     return DSMValue_asPyUnicode(machine->variables[idx]);
+
+cleanup:
+    return NULL;
 }
 
 static int DSMMachine_ass_subscript(DSMMachine* machine, PyObject* key, PyObject* value) {
     PyObject* slotNumber = PyDict_GetItem(machine->program->variableNameToSlotDict, key);
-    if (!slotNumber) {
-        PyErr_SetObject(PyExc_KeyError, key);
-        return -1;
-    }
+    CHECK_WITH_OBJECT(slotNumber, PyExc_KeyError, key);
 
     size_t idx = PyLong_AsSize_t(slotNumber);
-    if (idx >= machine->program->variableCount) {
-        PyErr_SetString(PyExc_IndexError, "index is out of range");
-        return -1;
-    }
+    CHECK_WITH_MESSAGE(
+        idx < machine->program->variableCount,
+        PyExc_IndexError, "index is out of range");
 
-    mpd_context_t ctx; mpd_defaultcontext(&ctx);
+    mpd_context_t ctx; mpd_dsmcontext(&ctx);
     DSMValue* v = DSMMachine_createValueFromPythonObject(machine, value, "variable", &ctx, PyExc_ValueError);
-    if (!v) {
-        return -1;
-    }
+    CHECK(v);
 
     machine->variables[idx] = v;
     return 0;
+
+cleanup:
+    return -1;
 }
 
 static Py_ssize_t DSMMachine_len(DSMMachine* machine) {
@@ -1029,14 +1259,16 @@ static Py_ssize_t DSMMachine_len(DSMMachine* machine) {
 }
 
 static inline DSMValue* DSMMachine_popStack(DSMMachine* machine) {
-    assert(machine->stackUsed);
     machine->stackUsed -= 1;
-    return machine->stack[machine->stackUsed];
+    DSMValue* v = machine->stack[machine->stackUsed];
+    assert(v->i32Valid || v->mpdValid);
+    return v;
 }
 
 static inline DSMValue* DSMMachine_peekStack(DSMMachine* machine) {
-    assert(machine->stackUsed);
-    return machine->stack[machine->stackUsed - 1];
+    DSMValue* v = machine->stack[machine->stackUsed - 1];
+    assert(v->i32Valid || v->mpdValid);
+    return v;
 }
 
 static PyObject* DSMMachine_run_(DSMMachine* machine, int coverage) {
@@ -1046,7 +1278,7 @@ static PyObject* DSMMachine_run_(DSMMachine* machine, int coverage) {
     PyObject* result = NULL;
     PyObject* randomNumberIterator = NULL; // lazily initialized
 
-    mpd_context_t ctx; mpd_defaultcontext(&ctx);
+    mpd_context_t ctx; mpd_dsmcontext(&ctx);
     uint32_t mpdStatus = 0;
 
     unsigned long instructionsExecuted = 0;
@@ -1055,32 +1287,65 @@ static PyObject* DSMMachine_run_(DSMMachine* machine, int coverage) {
 
     unsigned char* coverageStats = NULL;
     if (coverage) {
-        CHECK_ALLOCATION(coverageStats = (unsigned char*)PyMem_Malloc(instructionCount));
+        coverageStats = (unsigned char*)PyMem_Malloc(instructionCount);
+        CHECK_ALLOCATION(coverageStats);
         memset(coverageStats, 0, instructionCount);
     }
 
     assert(machine->stackUsed == 0);
 
-#define PUSH(v) do { \
-    DSMValue* _tmp = (v); \
-    assert(_tmp); \
-    CHECK_WITH_MESSAGE(machine->stackUsed != STACK_SIZE, PyExc_ExecutionError, "ran out of stack"); \
-    machine->stack[machine->stackUsed] = _tmp; \
-    machine->stackUsed += 1; \
-} while (0)
+#define PUSH(v) \
+    do {                  \
+        DSMValue* _tmp = (v); \
+        assert(_tmp); \
+        assert(_tmp->i32Valid || _tmp->mpdValid); \
+        CHECK_WITH_MESSAGE(machine->stackUsed != STACK_SIZE, PyExc_ExecutionError, "ran out of stack"); \
+        machine->stack[machine->stackUsed] = _tmp; \
+        machine->stackUsed += 1; \
+    } while (0)
 
+// POP() and PEEK() cannot be pure macros because they are used as expressions and have side effects
 #define POP() DSMMachine_popStack(machine)
-
 #define PEEK() DSMMachine_peekStack(machine)
 
+#define ALLOC() DSMMachine_allocateArenaValue(machine, NULL, NULL)
+#define ALLOC_1(gcRoot1) DSMMachine_allocateArenaValue(machine, gcRoot1, NULL)
+#define ALLOC_2(gcRoot1, gcRoot2) DSMMachine_allocateArenaValue(machine, gcRoot1, gcRoot2)
+
+// Initialize a DSMValue's mpd from its i32 (if it's not already initialized)
+#define ENSURE_MPD_VALID(v) \
+    do { \
+        DSMValue* _tmp = (v); \
+        assert(_tmp); \
+        if (!_tmp->mpdValid) { \
+            assert(_tmp->i32Valid); \
+            mpdStatus = 0; \
+            mpd_qset_i32(MPD(_tmp), _tmp->i32, &ctx, &mpdStatus); \
+            CHECK_ALLOCATION(!(mpdStatus & MPD_Malloc_error)); \
+            CHECK_WITH_FORMATTED_MESSAGE( \
+                !(mpdStatus & MPD_Errors_and_overflows), \
+                PyExc_ExecutionError, "could not convert %i from integer to decimal", (int)_tmp->i32); \
+            assert(!mpd_isspecial(MPD(_tmp))); \
+        } \
+    } while (0)
+
     /* BEGIN EXECUTION */
+
+#ifdef ABYSMAL_TRACE
+    printf("\n==================================================\n");
+    DSMMachine_printProgram(machine);
+    printf("--------------------------------------------------\n");
+    DSMMachine_printBaseline(machine);
+#endif
 
     goto execute;
 
 advance:
+
     pc += 1;
 
 execute:
+
     CHECK_WITH_FORMATTED_MESSAGE(
         pc < instructionCount,
         PyExc_ExecutionError, "current execution location %zu is out-of-bounds", pc);
@@ -1088,20 +1353,24 @@ execute:
         instructionsExecuted != instructionLimit,
         PyExc_InstructionLimitExceededError, "execution forcibly terminated after %zu instructions", instructionsExecuted);
 
+    instruction = &machine->program->instructions[pc];
+
+#ifdef ABYSMAL_TRACE
+    printf("--------------------------------------------------\n");
+    DSMMachine_printVariables(machine);
+    DSMMachine_printStack(machine);
+    printf("TICK %zu: execute %s", instructionsExecuted, OPCODE_INFO[instruction->opcode].name);
+    if (OPCODE_INFO[instruction->opcode].hasParam) printf("%u", (unsigned int)instruction->param);
+    printf(" at location %zu\n", pc);
+#ifdef ABYSMAL_TRACE_INTERACTIVE
+    getchar();
+#endif
+#endif
+
     if (coverageStats) {
         coverageStats[pc] = 1;
     }
     instructionsExecuted += 1;
-    instruction = &machine->program->instructions[pc];
-
-#ifdef ABYSMAL_TRACE
-    DSMMachine_dump(machine);
-    if (OPCODE_INFO[instruction->opcode].hasParam) {
-        printf("\nPC = %zu, OPCODE = %s%u\n\n", pc, OPCODE_INFO[instruction->opcode].name, (unsigned int)instruction->param);
-    } else {
-        printf("\nPC = %zu, OPCODE = %s\n\n", pc, OPCODE_INFO[instruction->opcode].name);
-    }
-#endif
 
     CHECK_WITH_FORMATTED_MESSAGE(
         machine->stackUsed >= OPCODE_INFO[instruction->opcode].operands,
@@ -1120,13 +1389,21 @@ execute:
         }
 
         case OP_JUMP_IF_NONZERO: {
-            pc = mpd_iszero(MPD(POP())) ? pc + 1 : instruction->param;
-            goto execute;
+            DSMValue* v = POP();
+            if (!DSMValue_IS_ZERO(v)) {
+                pc = instruction->param;
+                goto execute;
+            }
+            goto advance;
         }
 
         case OP_JUMP_IF_ZERO: {
-            pc = mpd_iszero(MPD(POP())) ? instruction->param : pc + 1;
-            goto execute;
+            DSMValue* v = POP();
+            if (DSMValue_IS_ZERO(v)) {
+                pc = instruction->param;
+                goto execute;
+            }
+            goto advance;
         }
 
         case OP_LOAD_CONSTANT: {
@@ -1165,28 +1442,30 @@ execute:
                         PyExc_ExecutionError, "random_number_iterator is not an iterator");
                 }
             }
-            DSMValue* v;
             if (!randomNumberIterator) {
-                v = POS_INTERNED_DIGIT(0);
+                PUSH(INTERNED_DIGIT(0));
             } else {
-                v = NULL;
                 PyObject* random = PyIter_Next(randomNumberIterator);
-                CHECK_WITH_MESSAGE(random, PyExc_ExecutionError, "random_number_iterator ran out of values");
-                v = DSMMachine_createValueFromPythonObject(machine, random, "random number", &ctx, PyExc_ExecutionError);
+                if (!random) {
+                    // Distinguish between StopIteration and other errors.
+                    CHECK(!PyErr_Occurred());
+                    CHECK_WITH_MESSAGE(0, PyExc_ExecutionError, "random_number_iterator ran out of values");
+                }
+                DSMValue* v = DSMMachine_createValueFromPythonObject(machine, random, "random number", &ctx, PyExc_ExecutionError);
                 Py_DECREF(random);
                 CHECK(v);
+                PUSH(v);
             }
-            PUSH(v);
             goto advance;
         }
 
         case OP_LOAD_ZERO: {
-            PUSH(POS_INTERNED_DIGIT(0));
+            PUSH(INTERNED_DIGIT(0));
             goto advance;
         }
 
         case OP_LOAD_ONE: {
-            PUSH(POS_INTERNED_DIGIT(1));
+            PUSH(INTERNED_DIGIT(1));
             goto advance;
         }
 
@@ -1211,27 +1490,73 @@ execute:
         }
 
         case OP_NOT: {
-            PUSH(mpd_iszero(MPD(POP())) ? POS_INTERNED_DIGIT(1) : POS_INTERNED_DIGIT(0));
+            DSMValue* v = POP();
+            PUSH(DSMValue_IS_ZERO(v) ? INTERNED_DIGIT(1) : INTERNED_DIGIT(0));
             goto advance;
         }
 
-        case OP_NEGATE:
-        case OP_ABSOLUTE:
+    negate:
+        case OP_NEGATE: {
+            DSMValue* va = POP();
+            if (va->i32Valid && va->i32 >= -MAX_INTERNED_DIGIT && va->i32 <= MAX_INTERNED_DIGIT) {
+                // Negated value can be represented by an interned digit.
+                PUSH(INTERNED_DIGIT(-va->i32));
+                goto advance;
+            }
+            DSMValue* vr = ALLOC_1(va); CHECK(vr);
+            if (va->i32Valid && va->i32 != INT32_MIN) {
+                // Value is an integer that can be safely negated (remember, -INT32_MIN > INT32_MAX).
+                vr->i32Valid = 1;
+                vr->i32 = -va->i32;
+                PUSH(vr);
+                goto advance;
+            }
+            // Value is a decimal.
+            ENSURE_MPD_VALID(va);
+            mpdStatus = 0;
+            mpd_qminus(MPD(vr), MPD(va), &ctx, &mpdStatus);
+            CHECK(!(mpdStatus & MPD_Errors_and_overflows));
+            assert(!mpd_isspecial(MPD(vr)));
+            vr->mpdValid = 1;
+            vr = DSMValue_simplify(vr, &ctx);
+            PUSH(vr);
+            goto advance;
+        }
+
+        case OP_ABSOLUTE: {
+            DSMValue* v = PEEK();
+            if (v->i32Valid) {
+                if (v->i32 >= 0) {
+                    // Value is already its own absolute value.
+                    goto advance;
+                }
+            } else if (mpd_ispositive(MPD(v))) {
+                // Value is already its own absolute value.
+                goto advance;
+            }
+            goto negate;
+        }
+
         case OP_CEILING:
         case OP_FLOOR:
         case OP_ROUND: {
-            DSMValue* vout = DSMMachine_allocateArenaValue(machine); CHECK(vout);
-            DSMValue* vin = POP();
-            mpdStatus = 0;
-            switch (instruction->opcode) {
-                case OP_NEGATE: mpd_qminus(MPD(vout), MPD(vin), &ctx, &mpdStatus); break;
-                case OP_ABSOLUTE: mpd_qabs(MPD(vout), MPD(vin), &ctx, &mpdStatus); break;
-                case OP_CEILING: mpd_qceil(MPD(vout), MPD(vin), &ctx, &mpdStatus); break;
-                case OP_FLOOR: mpd_qfloor(MPD(vout), MPD(vin), &ctx, &mpdStatus); break;
-                case OP_ROUND: mpd_qround_to_int(MPD(vout), MPD(vin), &ctx, &mpdStatus); break;
+            if (PEEK()->i32Valid) {
+                // Value is already its own ceiling/floor/rounded value.
+            } else {
+                DSMValue* vr = ALLOC(); CHECK(vr);
+                DSMValue* va = POP();
+                mpdStatus = 0;
+                switch (instruction->opcode) {
+                    case OP_CEILING: mpd_qceil(MPD(vr), MPD(va), &ctx, &mpdStatus); break;
+                    case OP_FLOOR: mpd_qfloor(MPD(vr), MPD(va), &ctx, &mpdStatus); break;
+                    case OP_ROUND: mpd_qround_to_int(MPD(vr), MPD(va), &ctx, &mpdStatus); break;
+                }
+                CHECK(!(mpdStatus & MPD_Errors_and_overflows));
+                assert(!mpd_isspecial(MPD(vr)));
+                vr->mpdValid = 1;
+                vr = DSMValue_simplify(vr, &ctx);
+                PUSH(vr);
             }
-            CHECK(!(mpdStatus & MPD_Errors));
-            PUSH(vout);
             goto advance;
         }
 
@@ -1239,52 +1564,261 @@ execute:
         case OP_NOT_EQUAL:
         case OP_GREATER_THAN:
         case OP_GREATER_THAN_OR_EQUAL: {
-            DSMValue* v2 = POP();
-            DSMValue* v1 = POP();
-            mpdStatus = 0;
-            int cmp = mpd_qcmp(MPD(v1), MPD(v2), &mpdStatus);
-            CHECK(!(mpdStatus & MPD_Errors));
-            switch (instruction->opcode) {
-                case OP_EQUAL: cmp = !cmp; break;
-                case OP_GREATER_THAN: cmp = (cmp > 0); break;
-                case OP_GREATER_THAN_OR_EQUAL: cmp = (cmp >= 0); break;
+            DSMValue* vb = POP();
+            DSMValue* va = POP();
+            int cmp;
+            if (va->i32Valid && vb->i32Valid) {
+                switch (instruction->opcode) {
+                    case OP_EQUAL: cmp = va->i32 == vb->i32; break;
+                    case OP_NOT_EQUAL: cmp = va->i32 != vb->i32; break;
+                    case OP_GREATER_THAN: cmp = va->i32 > vb->i32; break;
+                    case OP_GREATER_THAN_OR_EQUAL: cmp = va->i32 >= vb->i32; break;
+                }
+            } else {
+                ENSURE_MPD_VALID(va);
+                ENSURE_MPD_VALID(vb);
+                mpdStatus = 0;
+                cmp = mpd_qcmp(MPD(va), MPD(vb), &mpdStatus);
+                CHECK(!(mpdStatus & MPD_Errors_and_overflows));
+                switch (instruction->opcode) {
+                    case OP_EQUAL: cmp = !cmp; break;
+                    case OP_GREATER_THAN: cmp = (cmp > 0); break;
+                    case OP_GREATER_THAN_OR_EQUAL: cmp = (cmp >= 0); break;
+                }
             }
-            PUSH(cmp ? POS_INTERNED_DIGIT(1) : POS_INTERNED_DIGIT(0));
+            PUSH(cmp ? INTERNED_DIGIT(1) : INTERNED_DIGIT(0));
             goto advance;
         }
 
-        case OP_ADD:
-        case OP_SUBTRACT:
-        case OP_MULTIPLY:
-        case OP_DIVIDE:
-        case OP_POWER: {
-            DSMValue* vout = DSMMachine_allocateArenaValue(machine); CHECK(vout);
-            DSMValue* vin2 = POP();
-            DSMValue* vin1 = POP();
-            mpdStatus = 0;
-            switch (instruction->opcode) {
-                case OP_ADD: mpd_qadd(MPD(vout), MPD(vin1), MPD(vin2), &ctx, &mpdStatus); break;
-                case OP_SUBTRACT: mpd_qsub(MPD(vout), MPD(vin1), MPD(vin2), &ctx, &mpdStatus); break;
-                case OP_MULTIPLY: mpd_qmul(MPD(vout), MPD(vin1), MPD(vin2), &ctx, &mpdStatus); break;
-                case OP_DIVIDE: mpd_qdiv(MPD(vout), MPD(vin1), MPD(vin2), &ctx, &mpdStatus); break;
-                case OP_POWER: mpd_qpow(MPD(vout), MPD(vin1), MPD(vin2), &ctx, &mpdStatus); break;
+        case OP_ADD: {
+            DSMValue* vb = POP();
+            if (DSMValue_IS_ZERO(vb)) {
+                // a + 0 = a
+                goto advance;
             }
-            CHECK(!(mpdStatus & MPD_Errors));
-            PUSH(vout);
+            DSMValue* va = POP();
+            if (DSMValue_IS_ZERO(va)) {
+                // 0 + b = b
+                PUSH(vb);
+                goto advance;
+            }
+            DSMValue* vr = ALLOC_2(va, vb); CHECK(vr);
+            if (va->i32Valid && vb->i32Valid) {
+                int64_t i64out = (int64_t)va->i32 + (int64_t)vb->i32;
+                vr->i32Valid = i64out >= INT32_MIN && i64out <= INT32_MAX;
+                vr->i32 = (int32_t)i64out;
+                mpdStatus = 0;
+                mpd_qset_i64(MPD(vr), i64out, &ctx, &mpdStatus);
+                CHECK_ALLOCATION(!(mpdStatus & MPD_Malloc_error));
+                CHECK_WITH_FORMATTED_MESSAGE(
+                    !(mpdStatus & MPD_Errors_and_overflows),
+                    PyExc_ExecutionError, "could not convert %ll from integer to decimal", (PY_LONG_LONG)i64out);
+                assert(!mpd_isspecial(MPD(vr)));
+                vr->mpdValid = 1;
+            } else {
+                ENSURE_MPD_VALID(va);
+                ENSURE_MPD_VALID(vb);
+                mpdStatus = 0;
+                mpd_qadd(MPD(vr), MPD(va), MPD(vb), &ctx, &mpdStatus);
+                CHECK(!(mpdStatus & MPD_Errors_and_overflows));
+                assert(!mpd_isspecial(MPD(vr)));
+                vr->mpdValid = 1;
+                vr = DSMValue_simplify(vr, &ctx);
+            }
+            PUSH(vr);
+            goto advance;
+        }
+
+        case OP_SUBTRACT: {
+            DSMValue* vb = POP();
+            if (DSMValue_IS_ZERO(vb)) {
+                // a - 0 = a
+                goto advance;
+            }
+            DSMValue* va = POP();
+            if (DSMValue_ARE_OBVIOUSLY_EQUAL(va, vb)) {
+                // a - a = 0
+                PUSH(INTERNED_DIGIT(0));
+                goto advance;
+            }
+            if (DSMValue_IS_ZERO(va)) {
+                // 0 - b = -b
+                PUSH(vb);
+                goto negate;
+            }
+            DSMValue* vr = ALLOC_2(va, vb); CHECK(vr);
+            if (va->i32Valid && vb->i32Valid) {
+                int64_t i64out = (int64_t)va->i32 - (int64_t)vb->i32;
+                vr->i32Valid = i64out >= INT32_MIN && i64out <= INT32_MAX;
+                vr->i32 = (int32_t)i64out;
+                mpdStatus = 0;
+                mpd_qset_i64(MPD(vr), i64out, &ctx, &mpdStatus);
+                CHECK_ALLOCATION(!(mpdStatus & MPD_Malloc_error));
+                CHECK_WITH_FORMATTED_MESSAGE(
+                    !(mpdStatus & MPD_Errors_and_overflows),
+                    PyExc_ExecutionError, "could not convert %ll from integer to decimal", (PY_LONG_LONG)i64out);
+                assert(!mpd_isspecial(MPD(vr)));
+                vr->mpdValid = 1;
+            } else {
+                ENSURE_MPD_VALID(va);
+                ENSURE_MPD_VALID(vb);
+                mpdStatus = 0;
+                mpd_qsub(MPD(vr), MPD(va), MPD(vb), &ctx, &mpdStatus);
+                CHECK(!(mpdStatus & MPD_Errors_and_overflows));
+                assert(!mpd_isspecial(MPD(vr)));
+                vr->mpdValid = 1;
+                vr = DSMValue_simplify(vr, &ctx);
+            }
+            PUSH(vr);
+            goto advance;
+        }
+
+    multiply:
+        case OP_MULTIPLY: {
+            DSMValue* vb = POP();
+            if (DSMValue_IS_ZERO(vb)) {
+                // a * 0 = 0
+                POP();
+                PUSH(INTERNED_DIGIT(0));
+                goto advance;
+            }
+            if (DSMValue_IS_OBVIOUSLY_ONE(vb)) {
+                // a * 1 = a
+                goto advance;
+            }
+            DSMValue* va = POP();
+            if (DSMValue_IS_ZERO(va)) {
+                // 0 * b = 0
+                PUSH(INTERNED_DIGIT(0));
+                goto advance;
+            }
+            if (DSMValue_IS_OBVIOUSLY_ONE(va)) {
+                // 1 * b = b
+                PUSH(vb);
+                goto advance;
+            }
+            DSMValue* vr = ALLOC_2(va, vb); CHECK(vr);
+            if (va->i32Valid && vb->i32Valid) {
+                int64_t i64out = (int64_t)va->i32 * (int64_t)vb->i32;
+                vr->i32Valid = i64out >= INT32_MIN && i64out <= INT32_MAX;
+                vr->i32 = (int32_t)i64out;
+                mpdStatus = 0;
+                mpd_qset_i64(MPD(vr), i64out, &ctx, &mpdStatus);
+                CHECK_ALLOCATION(!(mpdStatus & MPD_Malloc_error));
+                CHECK_WITH_FORMATTED_MESSAGE(
+                    !(mpdStatus & MPD_Errors_and_overflows),
+                    PyExc_ExecutionError, "could not convert %ll from integer to decimal", (PY_LONG_LONG)i64out);
+                assert(!mpd_isspecial(MPD(vr)));
+                vr->mpdValid = 1;
+            } else {
+                ENSURE_MPD_VALID(va);
+                ENSURE_MPD_VALID(vb);
+                mpdStatus = 0;
+                mpd_qmul(MPD(vr), MPD(va), MPD(vb), &ctx, &mpdStatus);
+                CHECK(!(mpdStatus & MPD_Errors_and_overflows));
+                assert(!mpd_isspecial(MPD(vr)));
+                vr->mpdValid = 1;
+                vr = DSMValue_simplify(vr, &ctx);
+            }
+            PUSH(vr);
+            goto advance;
+        }
+
+        case OP_DIVIDE: {
+            DSMValue* vb = POP();
+            if (DSMValue_IS_ZERO(vb)) {
+                // a / 0 = ERROR
+                mpdStatus = MPD_Division_by_zero;
+                CHECK(0);
+            }
+            if (DSMValue_IS_OBVIOUSLY_ONE(vb)) {
+                // a / 1 = a
+                goto advance;
+            }
+            DSMValue* va = POP();
+            if (DSMValue_IS_ZERO(va)) {
+                // 0 / b = 0
+                PUSH(INTERNED_DIGIT(0));
+                goto advance;
+            }
+            if (DSMValue_ARE_OBVIOUSLY_EQUAL(va, vb)) {
+                // a / a = 1
+                PUSH(INTERNED_DIGIT(1));
+                goto advance;
+            }
+            DSMValue* vr = ALLOC_2(va, vb); CHECK(vr);
+            ENSURE_MPD_VALID(va);
+            ENSURE_MPD_VALID(vb);
+            mpdStatus = 0;
+            mpd_qdiv(MPD(vr), MPD(va), MPD(vb), &ctx, &mpdStatus);
+            CHECK(!(mpdStatus & MPD_Errors_and_overflows));
+            assert(!mpd_isspecial(MPD(vr)));
+            vr->mpdValid = 1;
+            vr = DSMValue_simplify(vr, &ctx);
+            PUSH(vr);
+            goto advance;
+        }
+
+        case OP_POWER: {
+            DSMValue* vb = POP();
+            if (DSMValue_IS_OBVIOUSLY_ONE(vb)) {
+                // a ^ 1 = a
+                goto advance;
+            }
+            if (DSMValue_IS_OBVIOUSLY_TWO(vb)) {
+                // a ^ 2 = a * a
+                PUSH(PEEK());
+                goto multiply;
+            }
+            DSMValue* va = POP();
+            if (DSMValue_IS_ZERO(vb)) {
+                // 0 ^ 0 = 0
+                // a ^ 0 = 1
+                PUSH(INTERNED_DIGIT(DSMValue_IS_ZERO(va) ? 0 : 1));
+                goto advance;
+            }
+            if (DSMValue_IS_ZERO(va) && DSMValid_IS_NEGATIVE(vb)) {
+                mpdStatus = MPD_Invalid_operation;
+                CHECK(0);
+            }
+            if (DSMValue_IS_OBVIOUSLY_ONE(va)) {
+                // 1 ^ b = 1
+                PUSH(INTERNED_DIGIT(1));
+                goto advance;
+            }
+            DSMValue* vr = ALLOC_2(va, vb); CHECK(vr);
+            ENSURE_MPD_VALID(va);
+            ENSURE_MPD_VALID(vb);
+            mpdStatus = 0;
+            mpd_qpow(MPD(vr), MPD(va), MPD(vb), &ctx, &mpdStatus);
+            CHECK(!(mpdStatus & MPD_Errors_and_overflows));
+            assert(!mpd_isspecial(MPD(vr)));
+            vr->mpdValid = 1;
+            vr = DSMValue_simplify(vr, &ctx);
+            PUSH(vr);
             goto advance;
         }
 
         case OP_MIN:
         case OP_MAX: {
-            DSMValue* v2 = POP();
-            DSMValue* v1 = POP();
-            mpdStatus = 0;
-            int cmp = mpd_qcmp(MPD(v1), MPD(v2), &mpdStatus);
-            CHECK(!(mpdStatus & MPD_Errors));
-            PUSH((instruction->opcode == OP_MIN) ? ((cmp < 0) ? v1 : v2) : ((cmp > 0) ? v1 : v2));
+            DSMValue* vb = POP();
+            DSMValue* va = POP();
+            int cmp;
+            if (va->i32Valid && vb->i32Valid) {
+                cmp = (va->i32 == vb->i32) ? 0 : (va->i32 < vb->i32) ? -1 : 1;
+            } else {
+                ENSURE_MPD_VALID(va);
+                ENSURE_MPD_VALID(vb);
+                mpdStatus = 0;
+                cmp = mpd_qcmp(MPD(va), MPD(vb), &mpdStatus);
+                CHECK(!(mpdStatus & MPD_Errors_and_overflows));
+            }
+            PUSH((instruction->opcode == OP_MIN) ? ((cmp < 0) ? va : vb) : ((cmp > 0) ? va : vb));
             goto advance;
         }
 
+        // All opcodes have associated case statements, so the default case
+        // cannot get hit unless there is a bug somewhere.
         default: {
             CHECK_WITH_FORMATTED_MESSAGE(
                 0,
@@ -1295,6 +1829,7 @@ execute:
     }
 
 exit_successfully:
+
     if (coverage) {
         result = PyTuple_New((Py_ssize_t)instructionCount);
         CHECK(result);
@@ -1309,13 +1844,16 @@ exit_successfully:
     }
 
 cleanup:
+
     if (mpdStatus & MPD_Malloc_error) {
         PyErr_NoMemory();
-    } else if (mpdStatus & MPD_Errors) {
-        if (mpdStatus & (MPD_Division_by_zero | MPD_Division_impossible | MPD_Division_undefined | MPD_Invalid_operation)) {
+    } else if (mpdStatus & MPD_Errors_and_overflows) {
+        if (mpdStatus & MPD_Overflow) {
+            PyErr_Format(PyExc_ExecutionError, "result of %s at instruction %zu was too large", OPCODE_INFO[instruction->opcode].name, pc);
+        } else if (mpdStatus & MPD_Underflow) {
+            PyErr_Format(PyExc_ExecutionError, "result of %s at instruction %zu was too small", OPCODE_INFO[instruction->opcode].name, pc);
+        } else if (mpdStatus & MPD_Errors) {
             PyErr_Format(PyExc_ExecutionError, "illegal %s at instruction %zu", OPCODE_INFO[instruction->opcode].name, pc);
-        } else {
-            PyErr_Format(PyExc_ExecutionError, "computation error (status = %u) in %s operation at instruction %zu", (unsigned int)mpdStatus, OPCODE_INFO[instruction->opcode].name, pc);
         }
 
         // Add `instruction` and `opcode` attributes to the raised exception object.
@@ -1333,14 +1871,16 @@ cleanup:
     }
 
     Py_XDECREF(randomNumberIterator);
+    PyMem_Free(coverageStats);
 
-    if (coverageStats) {
-        PyMem_Free(coverageStats);
-    }
 #ifdef ABYSMAL_TRACE
-    printf("HALT\n\n");
-    DSMMachine_dump(machine);
+    printf("--------------------------------------------------\n");
+    DSMMachine_printVariables(machine);
+    DSMMachine_printStack(machine);
+    printf("PROGRAM HALTED\n");
+    printf("==================================================\n");
 #endif
+
     machine->stackUsed = 0;
     return result;
 }
@@ -1355,24 +1895,6 @@ static PyObject* DSMMachine_runWithCoverage(DSMMachine* machine, PyObject* dummy
     return DSMMachine_run_(machine, 1/*coverage*/);
 }
 
-#ifdef ABYSMAL_TRACE
-static void DSMMachine_dump(DSMMachine* machine) {
-    size_t i;
-    printf("STACK =\n");
-    for (i = 0; i < machine->stackUsed; i += 1) {
-        printf("  %zu: ", i); mpd_print(MPD(machine->stack[i]));
-    }
-    printf("VARIABLES =\n");
-    for (i = 0; i < machine->program->variableCount; i += 1) {
-        printf("  %zu: ", i); mpd_print(MPD(machine->variables[i]));
-    }
-    printf("BASELINE =\n");
-    for (i = 0; i < machine->program->variableCount; i += 1) {
-        printf("  %zu: ", i); mpd_print(MPD(machine->variables[machine->program->variableCount + i]));
-    }
-}
-#endif
-
 
 /********** module initialization **********/
 
@@ -1380,30 +1902,62 @@ static PyMethodDef dsm_methods[] = {
     { NULL, NULL, 0, NULL }
 };
 
-PyMODINIT_FUNC CONCAT(PyInit_, MODULE_NAME)(void) {
-    static struct PyModuleDef moduledef = { PyModuleDef_HEAD_INIT, STRINGIFY(MODULE_NAME), "Decimal stack machine", -1, dsm_methods, };
+PyMODINIT_FUNC PyInit_dsm(void) {
+    // Initialize module definition.
+    static struct PyModuleDef moduledef = { PyModuleDef_HEAD_INIT, "dsm", "Decimal stack machine", -1, dsm_methods, };
     PyModule_dsm = PyModule_Create(&moduledef);
-    if (!PyModule_dsm) return MODULE_INIT_ERROR;
+    CHECK(PyModule_dsm);
 
     // Allocate global string constants.
-    if (!(PyUnicode_semicolon = PyUnicode_InternFromString(";")) ||
-        !(PyUnicode_pipe = PyUnicode_InternFromString("|"))) {
-        return MODULE_INIT_ERROR;
-    }
+    CHECK(PyUnicode_semicolon = PyUnicode_InternFromString(";"));
+    CHECK(PyUnicode_pipe = PyUnicode_InternFromString("|"));
+
+    // Initialize interned digits.
+#define INIT_INTERNED_DIGIT(digit) \
+    do { \
+        CHECK(INTERNED_DIGIT(digit)->str = PyUnicode_InternFromString(#digit)); \
+    } while (0)
+    INIT_INTERNED_DIGIT(-9);
+    INIT_INTERNED_DIGIT(-8);
+    INIT_INTERNED_DIGIT(-7);
+    INIT_INTERNED_DIGIT(-6);
+    INIT_INTERNED_DIGIT(-5);
+    INIT_INTERNED_DIGIT(-4);
+    INIT_INTERNED_DIGIT(-3);
+    INIT_INTERNED_DIGIT(-2);
+    INIT_INTERNED_DIGIT(-1);
+    INIT_INTERNED_DIGIT(0);
+    INIT_INTERNED_DIGIT(1);
+    INIT_INTERNED_DIGIT(2);
+    INIT_INTERNED_DIGIT(3);
+    INIT_INTERNED_DIGIT(4);
+    INIT_INTERNED_DIGIT(5);
+    INIT_INTERNED_DIGIT(6);
+    INIT_INTERNED_DIGIT(7);
+    INIT_INTERNED_DIGIT(8);
+    INIT_INTERNED_DIGIT(9);
 
     // Initialize exception types.
-    DEFINE_EXCEPTION(InvalidProgramError, ValueError);
-    DEFINE_EXCEPTION(ExecutionError, ValueError);
-    DEFINE_EXCEPTION(InstructionLimitExceededError, ExecutionError);
+#define INIT_EXCEPTION(name, base) \
+    do { \
+        CHECK(PyExc_##name = PyErr_NewException("dsm." #name, PyExc_##base, NULL)); \
+        Py_INCREF(PyExc_##name); \
+        PyModule_AddObject(PyModule_dsm, #name, PyExc_##name); \
+    } while (0)
+    INIT_EXCEPTION(InvalidProgramError, ValueError);
+    INIT_EXCEPTION(ExecutionError, ValueError);
+    INIT_EXCEPTION(InstructionLimitExceededError, ExecutionError);
 
     // Initialize extension object types.
-    if (!DSMMachine_initType() || !DSMProgram_initType()) {
-        return MODULE_INIT_ERROR;
-    }
+    CHECK(DSMMachine_initType());
+    CHECK(DSMProgram_initType());
 
     // Add top-level module attributes.
     Py_INCREF(&DSMProgramType); // PyModule_AddObject() steals a ref
     PyModule_AddObject(PyModule_dsm, "Program", (PyObject*)&DSMProgramType);
 
     return PyModule_dsm;
+
+cleanup:
+    return NULL;
 }

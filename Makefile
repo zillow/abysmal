@@ -3,12 +3,12 @@
 
 .PHONY: help
 help:
-	@echo 'Usage: make [setup|develop|pylint|test|cover|package|clean]'
+	@echo 'Usage: make [setup|develop|pylint|test|benchmark|cover|package|clean]'
 
 
 .PHONY: setup
 setup:
-	sudo apt-get install python3-dev libmpdec-dev
+	sudo apt-get install -y python3-dev libmpdec-dev lcov
 
 
 .PHONY: develop
@@ -30,16 +30,29 @@ test: develop
 	python3 -m unittest -v tests/test_*.py
 
 
+.PHONY: benchmark
+benchmark: clean develop
+	@echo '---------------------------------------------'
+	@echo 'Running benchmarks with $(shell python3 --version)'
+	@echo '---------------------------------------------'
+	python3 -m unittest benchmarks/test_*.py
+
+
 .PHONY: cover
-cover: develop
+cover: clean
+	@echo '---------------------------------------------'
+	@echo 'Running coverage with $(shell python3 --version)'
+	@echo '---------------------------------------------'
 	pip install coverage
+	ABYSMAL_DEBUG=1 ABYSMAL_COVER=1 pip install -e .
+	mkdir -p build/ccoverage
+	mkdir -p build/pycoverage
 	python3 -m coverage run --branch --source 'abysmal' -m unittest tests/test_*.py
-	python3 -m coverage html -d $(abspath build/coverage)
+	python3 -m coverage html -d $(abspath build/pycoverage)
 	python3 -m coverage report
-
-
-.PHONY: commit
-commit: pylint test cover
+	gcov -b -o $$(find . -wholename './build/*/src/abysmal') src/abysmal/*.c
+	lcov --capture --directory . --output-file build/ccoverage/coverage.info
+	genhtml build/ccoverage/coverage.info --output-directory build/ccoverage
 
 
 .PHONY: package
@@ -52,6 +65,7 @@ clean:
 	python3 setup.py develop --uninstall
 	rm -rf \
 		.coverage \
+	    *.gcov \
 		build \
 		dist \
 		$$(find . -name '__pycache__') \

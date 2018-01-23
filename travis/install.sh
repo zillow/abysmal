@@ -5,5 +5,9 @@ if [ -z "$TRAVIS" ]; then
     exit 1
 fi
 
-python3 setup.py sdist
-ABYSMAL_COVER=1 ABYSMAL_DEBUG=1 pip install dist/abysmal*.tar.gz
+if [ -z "$ABYSMAL_COVER" ]; then
+    python3 setup.py sdist
+    pip install dist/abysmal*.tar.gz
+else
+    pip install -e .
+fi

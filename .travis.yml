@@ -8,6 +8,10 @@ python:
 
 sudo: required
 
+env:
+- ABYSMAL_STRICT=1
+- ABYSMAL_COVER=1 ABYSMAL_DEBUG=1
+
 before_install: travis/before_install.sh
 install: travis/install.sh
 script: travis/script.sh

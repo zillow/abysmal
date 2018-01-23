@@ -69,7 +69,7 @@ def read(*names, **kwargs):
 
 setup(
     name='abysmal',
-    version='1.1.1',
+    version='1.2.0',
 
     license='MIT license',
     url='https://github.com/zillow/abysmal',

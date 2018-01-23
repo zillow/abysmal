@@ -442,89 +442,6 @@ static PyObject* DSMValue_asPyUnicode(DSMValue* v) {
     return v->str;
 }
 
-//static PyObject* DSMValue_asPyUnicode_(DSMValue* v) {
-
-#define WRITE_CHAR(c) \
-    do { \
-        start -= 1; \
-        *start = (char)(c); \
-    } while (0)
-
-#define CHARS_WRITTEN() (bufferLength - (size_t)(start - buffer))
-
-//    if (!v->str) {
-//        if (DSMValue_IS_ZERO(v)) {
-//            // Represent all forms of zero as "0".
-//            v->str = INTERNED_DIGIT(0)->str;
-//            Py_INCREF(v->str);
-//        } else if (v->i32Valid) {
-//            int64_t i64 = v->i32;
-//            int negative = i64 < 0;
-//            char buffer[11]; // longest possible signed 32-bit int is "-2147483647"
-//            size_t bufferLength = sizeof(buffer);
-//            char* start = &buffer[bufferLength];
-//            if (negative) i64 = -i64;
-//            do {
-//                int64_t div = i64 / 10;
-//                int64_t mod = i64 - (div * 10);
-//                WRITE_CHAR(mod + '0');
-//                i64 = div;
-//            } while (i64);
-//            if (negative) WRITE_CHAR('-');
-//            v->str = PyUnicode_FromStringAndSize(start, (Py_ssize_t)CHARS_WRITTEN());
-//        } else {
-//            assert(v->mpdValid);
-//            mpd_ssize_t exp = MPD(v)->exp;
-//            size_t digits = (size_t)MPD(v)->digits;
-//            size_t bufferLength =
-//                1 + /* minus sign */
-//                1 + /* decimal point */
-//                digits +
-//                (size_t)(exp >= 0 ? exp : -exp); /* leading or trailing zeroes */
-//            char* buffer = (char*)PyMem_Malloc(bufferLength);
-//            if (buffer) {
-//                char* start = &buffer[bufferLength];
-//                // Write any trailing integer zeroes stored in the exponent.
-//                for (; exp > 0; exp -= 1) WRITE_CHAR('0');
-//                // Invariant: exp <= 0
-//                mpd_uint_t* nextWord = MPD(v)->data;
-//                size_t coeffDigitsAvailable = 0;
-//                mpd_uint_t coeff = 0;
-//                for (; digits; digits -= 1, coeffDigitsAvailable -= 1) {
-//                    // If we've exhausted the current coefficient word, load the next one.
-//                    if (!coeffDigitsAvailable) {
-//                        assert(!coeff);
-//                        coeff = *nextWord;
-//                        nextWord += 1;
-//                        coeffDigitsAvailable = MPD_RDIGITS;
-//                    }
-//                    mpd_uint_t div = coeff / 10;
-//                    mpd_uint_t mod = coeff - (div * 10);
-//                    if (mod || exp >= 0 || CHARS_WRITTEN()) WRITE_CHAR((char)mod + '0');
-//                    coeff = div;
-//                    exp += 1;
-//                    // If we just wrote the last of > 0 fractional digits, write a decimal point.
-//                    if (!exp && CHARS_WRITTEN()) WRITE_CHAR('.');
-//                }
-//                // Write leading fractional zeroes if necessary.
-//                if (exp < 0) {
-//                    for (; exp < 0; exp += 1) WRITE_CHAR('0');
-//                    WRITE_CHAR('.');
-//                }
-//                // Invariant: exp == 0
-//                // Write leading zero if necessary.
-//                if (*start == '.') WRITE_CHAR('0');
-//                // Write minus sign prefix if necessary.
-//                if (mpd_isnegative(MPD(v))) WRITE_CHAR('-');
-//                v->str = PyUnicode_FromStringAndSize(start, (Py_ssize_t)CHARS_WRITTEN());
-//                PyMem_Free(buffer);
-//            }
-//        }
-//    }
-//    Py_XINCREF(v->str);
-//    return v->str;
-//}
-
 
 /********** DSMArenaValue **********/
 
@@ -1566,7 +1483,7 @@ execute:
         case OP_GREATER_THAN_OR_EQUAL: {
             DSMValue* vb = POP();
             DSMValue* va = POP();
-            int cmp;
+            int cmp = 0;
             if (va->i32Valid && vb->i32Valid) {
                 switch (instruction->opcode) {
                     case OP_EQUAL: cmp = va->i32 == vb->i32; break;
